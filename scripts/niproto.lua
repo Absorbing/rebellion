@@ -1082,17 +1082,23 @@ function niproto.initDisplayData()
 end
 
 
-function niproto.MSG_DISPLAY(displayid, data) --luacheck: no unused
-
-    return niproto._pack(
-        "iiiii" .. string.rep('b',#data),
-        0x3647344,  --display msg
-        displayid, -- or 1 (display)
-        0, --x 16bit, y 16bit
-        0x01e00110, --w 16bit, h 16bit, 0x10[ ] 0x01[ ] 0xe0[à] 0x01[ ]
-        #data,    --button array
-        table.unpack(data)
+function niproto.MSG_DISPLAY(displayid, data) --PATCHED_CHUNKED_DISPLAY
+    -- Chunked packing to avoid Lua stack overflow on large display data
+    local header = spack("!4<iiiii",
+        0x3647344,
+        displayid,
+        0,
+        0x01e00110,
+        #data
     )
+    local chunks = { header }
+    local CHUNK = 4000
+    for i = 1, #data, CHUNK do
+        local j = math.min(i + CHUNK - 1, #data)
+        local n = j - i + 1
+        chunks[#chunks + 1] = spack(string.rep('b', n), table.unpack(data, i, j))
+    end
+    return table.concat(chunks)
 end
 
 function niproto.PARSE_DISPLAY_RESULT(data, len) --luacheck: no unused

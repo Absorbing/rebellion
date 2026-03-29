@@ -229,34 +229,11 @@ int main() {
 
 void
 _callCFRunLoop(double seconds) {
-
-    //printf("callCFRunLoop()\n");
-
-    //this should start the message queue for the port, otherwise the data will hang
-    //maybe use this? https://stackoverflow.com/questions/12825620/cfmessageport-weirdness
-    //mode, seconds, returnAfterSourceHandled
     CFRunLoopRunResult runLoopRunReturnValue = CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, true);
 
     if (runLoopRunReturnValue == kCFRunLoopRunHandledSource) {
         printf("C> niproto_pimpl::_callCFRunLoop: handled source\n");
-/*
-    } else if (runLoopRunReturnValue == kCFRunLoopRunFinished) {
-        printf("C> niproto_pimpl::_callCFRunLoop: finished\n");
-    } else if (runLoopRunReturnValue == kCFRunLoopRunStopped) {
-        printf("C> niproto_pimpl::_callCFRunLoop: stopped\n");
-    } else if (runLoopRunReturnValue == kCFRunLoopRunTimedOut) {
-        //printf("C> niproto_pimpl::_callCFRunLoop: timeout\n");
-*/
-    } else {
-        //TODO: check if this is an exception
-        //printf("C> niproto_pimpl::_callCFRunLoop: Exception??? ERROR?\n");
-
-        //printf("Exception?\n");
-        // Throw exception or whatever
-        // (although this will never be called using the above implementation
-        // since [NSDate distantFuture] is wayy into the future...)
     }
-    
 }
 
 bool NIIPC::_NIIPC::loop(double seconds) {
