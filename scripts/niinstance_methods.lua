@@ -84,8 +84,29 @@ local function notificationPortCallback(self, data, len)
             return
         end
 
-        log.info("Calling event handling code")
-        self:switchState("event",res)
+      log.info("Calling event handling code")
+      local eq = self:getEventQueue() or {}
+
+      -- Coalesce PAD_DATA: replace existing entry for same pad+state
+      -- so the queue stays small (prevents backlog from pressure stream)
+      local dominated = false
+      if res.name == "PAD_DATA" and res.data then
+          for i = #eq, 1, -1 do
+              if eq[i].name == "PAD_DATA" and eq[i].data
+                 and eq[i].data.padid == res.data.padid
+                 and eq[i].data.state == res.data.state then
+                  eq[i] = res
+                  dominated = true
+                  break
+              end
+          end
+      end
+      if not dominated then
+          table.insert(eq, res)
+      end
+
+      self:setEventQueue(eq)
+      self:switchState("event")
     end
 end
 
@@ -270,21 +291,24 @@ end
 
 
 
-function _M:onEVENT(event)
-    --log.info(self:getDevice():getName() .. ":" .. self:getSerial() .. " event")
-    event.device = self:getDevice():getName()
-    event.serial = self:getSerial()
-    event.self = self
-    print("niinstance_methods::onEVENT: dispatching event: ", event.name)
-    dispatcher:dispatch(event.name, event)
+function _M:onEVENT()
+    local events = self:getEventQueue() or {}
+    self:setEventQueue({})
 
---log.error("Setting state loop")
+    for _, event in ipairs(events) do
+        event.device = self:getDevice():getName()
+        event.serial = self:getSerial()
+        event.self = self
+        print("niinstance_methods::onEVENT: dispatching event: ", event.name)
+        dispatcher:dispatch(event.name, event)
+    end
+
     self:switchState("loop")
 end
 
 function _M:onLOOP(...)
     local notifport = self:getNotifPort()
-    notifport:loop(0.1)
+    notifport:loop(0.005)
     --assert(self:switchState("halt", "no error"))
     --log.debug(self:getDevice():getName() .. ":" .. self:getSerial() .. " loop")
     --App.sleep(0.1)

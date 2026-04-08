@@ -5,7 +5,7 @@
 # License: LGPLv3
 
 # Go cmake configuration
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.5...3.28)
 
 #find_library(golang REQUIRED)
 
