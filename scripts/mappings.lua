@@ -12,7 +12,7 @@ CONST_DEVICES = importDevices {
     { 0x1200, "MASCHINE_MIKRO_MK2", "MMMK2", "Maschine Mikro MK2", niproto.CONST_PORT_MAIN },
     { 0x1110, "MASCHINE_MIKRO_MK1", "MMMK1", "Maschine Mikro MK1", niproto.CONST_PORT_MAIN },
 
-    { 0x1820, "MASCHINE_PLUS", "MPLUS", "Maschine Plus", niproto.CONST_PORT_HOST },
+    { 0x1820, "MASCHINE_PLUS", "MPLUS", "Maschine Plus", niproto.CONST_PORT_HOST, 103, 2, 272, 480 },
     { 0x1600, "MASCHINE_MK3", "MMK3", "Maschine MK3", niproto.CONST_PORT_HOST, 103, 2, 272, 480 },
     { 0x1700, "MASCHINE_MIKRO_MK3", "MMMK3", "Maschine Mikro MK3", niproto.CONST_PORT_HOST },
     { 0x1350, "KOMPLETE_KONTROL_MK1", "KKMK1", "Komplete Kontrol MK1", niproto.CONST_PORT_HOST },
