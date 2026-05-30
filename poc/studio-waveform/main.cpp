@@ -36,13 +36,12 @@ constexpr int SERIAL_WAIT_MS     = 30000;
 constexpr int INSTANCE_WARMUP_MS = 4000;
 constexpr int SLICE_MS           = 30;
 
-// The under-display knobs are high-resolution endless encoders: one physical
-// notch emits a burst of +/-1 tick events. Tune how those ticks map to actions,
-// and cap how often we push a (slow, full-frame) redraw so a burst collapses to
-// a couple of frames instead of a multi-second backlog of 261KB pushes.
+// The under-display knobs are detent-less endless encoders: one turn emits a
+// burst of +/-1 tick events. Tune how those ticks map to actions, and cap how
+// often we push a (full-frame) redraw.
 constexpr double SCRUB_PER_TICK      = 0.005; // view shift per knob tick (before per-frame cap)
 constexpr double SCRUB_MAX_PER_FRAME = 0.025; // clamp scrub/frame so a tick burst can't jump the view
-constexpr int    SELECT_COOLDOWN_MS  = 130;   // min gap between track steps (one step per notch)
+constexpr int    SELECT_TICKS        = 10;    // Knob 2 ticks per track step on a *held* turn
 constexpr int    INPUT_POLL_MS       = 5;     // drain device input this often (stay reactive)
 constexpr int    REDRAW_MIN_MS       = 20;    // cap display pushes to ~50 fps
 
@@ -56,7 +55,8 @@ mxb::Waveform g_wf;               // currently loaded waveform
 double g_scroll = 0.0;            // view start as fraction 0..1 (Knob 1)
 int    g_scrubTicks = 0;         // net Knob 1 ticks awaiting apply (tallied in callback)
 int    g_selTicks   = 0;         // net Knob 2 ticks awaiting apply
-std::chrono::steady_clock::time_point g_lastSelect{};  // last Knob 2 track step
+int    g_selAccum   = 0;         // running Knob 2 tick balance (steps a track per SELECT_TICKS)
+bool   g_selStepped = false;     // did the current Knob 2 touch already move the selection?
 bool   g_knobTouched[9] = {false};  // 1..8: under-display knob touch (BTN_DATA) state
 bool   g_dirty0 = true, g_dirty1 = true;  // which screen needs a redraw
 
@@ -199,6 +199,15 @@ int msSince(std::chrono::steady_clock::time_point t) {
         std::chrono::steady_clock::now() - t).count());
 }
 
+void stepSelection(int dir) {
+    int n = static_cast<int>(g_tracks.size());
+    if (n <= 0) return;
+    g_selected = ((g_selected + dir) % n + n) % n;
+    g_selStepped = true;
+    std::fprintf(stderr, "  -> select track #%d\n", g_selected);
+    loadSelected();
+}
+
 void applyInput() {
     // Knob 1: scrub, proportional to ticks this frame but clamped.
     int s = g_scrubTicks;
@@ -213,19 +222,13 @@ void applyInput() {
         g_dirty1 = true;
     }
 
-    // Knob 2: one track step per notch — act on the first tick, then swallow the
-    // rest of the burst for a cooldown (a held turn steps at a steady rate).
-    if (g_selTicks != 0 && msSince(g_lastSelect) >= SELECT_COOLDOWN_MS) {
-        int dir = (g_selTicks > 0) ? 1 : -1;
-        g_selTicks = 0;
-        g_lastSelect = std::chrono::steady_clock::now();
-        int n = static_cast<int>(g_tracks.size());
-        if (n > 0) {
-            g_selected = ((g_selected + dir) % n + n) % n;
-            std::fprintf(stderr, "  -> select track #%d\n", g_selected);
-            loadSelected();
-        }
-    }
+    // Knob 2: deterministic — accumulate ticks and step one track every
+    // SELECT_TICKS. (A short nudge that never reaches the threshold is still
+    // honoured as one step when the knob is released; see the BTN_DATA handler.)
+    g_selAccum += g_selTicks;
+    g_selTicks = 0;
+    while (g_selAccum >=  SELECT_TICKS) { g_selAccum -= SELECT_TICKS; stepSelection(+1); }
+    while (g_selAccum <= -SELECT_TICKS) { g_selAccum += SELECT_TICKS; stepSelection(-1); }
 }
 
 int rpc_callback(rebellion_message_format mf, rebellion_message_type,
@@ -273,9 +276,11 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
         if (knob == "KNOB1")      g_scrubTicks += dir;
         else if (knob == "KNOB2") g_selTicks   += dir;
     } else if (ev == "BTN_DATA") {
-        // The under-display knobs are touch-sensitive: a touch arrives as
-        // KNOB1..8 PRESSED, lift as RELEASED. Use a fresh touch to clear any
-        // stale ticks so motion always starts from a clean slate.
+        // The under-display knobs are touch-sensitive: grab arrives as KNOB1..8
+        // PRESSED, lift as RELEASED. For Knob 2 we use the touch boundaries to
+        // make list nav crisp: clear the balance on grab, and on lift guarantee
+        // at least one step so a small nudge always moves exactly one item
+        // (longer turns already stepped via the SELECT_TICKS threshold).
         std::string btn, state;
         try { btn = fields.value("button", ""); state = fields.value("state", ""); }
         catch (...) {}
@@ -284,9 +289,19 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
             if (k >= 1 && k <= 8) {
                 bool pressed = (state == "PRESSED");
                 g_knobTouched[k] = pressed;
-                if (pressed) {
-                    if (k == 1) g_scrubTicks = 0;
-                    if (k == 2) { g_selTicks = 0; g_lastSelect = {}; }
+                if (k == 2) {
+                    if (pressed) {
+                        g_selAccum = 0;
+                        g_selStepped = false;
+                    } else {  // released
+                        // Fold any ticks still pending this batch (applyInput()
+                        // hasn't run yet) before deciding whether to flush.
+                        g_selAccum += g_selTicks;
+                        g_selTicks = 0;
+                        if (!g_selStepped && g_selAccum != 0)
+                            stepSelection(g_selAccum > 0 ? 1 : -1);
+                        g_selAccum = 0;
+                    }
                 }
             }
         }
