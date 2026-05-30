@@ -18,8 +18,7 @@
 #include <queue>
 #include <memory>
 #include <functional>
-
-#include <pthread.h>
+#include <mutex>
 
 #ifdef __GNUC__
 #define PACK( __Declaration__ ) __Declaration__ __attribute__((__packed__))
@@ -60,7 +59,7 @@ class NIIPC {
         std::string _name;
         std::queue< std::unique_ptr<NIIPC::Data> > _callbackResultQueue;
         Callback _callback;
-        pthread_mutex_t _cqlock;
+        std::mutex _cqlock;
 
         //forward declaration for pimpl
         class _NIIPC;
