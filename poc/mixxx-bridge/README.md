@@ -28,6 +28,30 @@ DeckState[1..4]               ── what the renderer reads (deck_state.*)
 
 The Mixxx-side emitter lives in `mixxx/Mixxx-Studio-Bridge.{midi.xml,scripts.js}`.
 
+## Virtual MIDI port (the bridge ↔ Mixxx link)
+
+The Studio is **not** a class-compliant MIDI device (it speaks NI's proprietary
+protocol over the NIHardwareService pipe), so Mixxx can never see it directly —
+the bridge is what turns it into a MIDI device Mixxx detects. That link needs a
+virtual MIDI port, and the only question is who creates it (Windows has no
+userland virtual-MIDI API; macOS/Linux do):
+
+| Backend | Creates the port | Mixxx sees it | Cost |
+|---|---|---|---|
+| loopMIDI (RtMidi connects) | user, manually | yes | none; manual setup |
+| teVirtualMIDI SDK | the bridge | yes | bundles a signed kernel driver; commercial license |
+| **Windows MIDI Services** | the bridge | **yes — via the in-box MIDI 1.0 / WinMM compat layer** | **none; in-box on Win11 24H2+** |
+
+**Decision (target = Win11):** use **Windows MIDI Services** in production — the
+bridge creates an app-owned virtual device that Mixxx auto-detects like a
+controller; no kernel driver, no licensing. Verified: app-created virtual
+endpoints are auto-translated to MIDI 1.0 and surfaced to legacy WinMM/PortMidi
+apps (Mixxx forwards through the compat shim with no changes). Caveats: GA'd
+2026 (new; has a known-issues page), needs the WMS App SDK runtime, and is
+C++/WinRT. Keep **RtMidi + loopMIDI** as a dev/fallback backend behind the same
+seam for first bring-up. The WMS backend must be written against the real SDK on
+the Windows rig (untestable off-device), so it's deliberately not stubbed blind.
+
 ## Files
 
 | File | Role | Tested off-device |
