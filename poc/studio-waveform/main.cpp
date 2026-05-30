@@ -12,6 +12,7 @@
 // Single-threaded: rebellion_loop / rebellion_rpc are only called from main().
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +36,14 @@ constexpr int SERIAL_WAIT_MS     = 30000;
 constexpr int INSTANCE_WARMUP_MS = 4000;
 constexpr int SLICE_MS           = 30;
 
+// The under-display knobs are high-resolution endless encoders: one physical
+// notch emits a burst of +/-1 tick events. Tune how those ticks map to actions,
+// and cap how often we push a (slow, full-frame) redraw so a burst collapses to
+// a couple of frames instead of a multi-second backlog of 261KB pushes.
+constexpr double SCRUB_PER_TICK  = 0.01;  // waveform view shift per knob tick
+constexpr int    SELECT_TICKS    = 4;     // knob ticks needed to step one track
+constexpr int    REDRAW_MIN_MS   = 50;    // cap full-frame pushes to ~20 fps
+
 std::string g_serial;
 
 // ---- app state -------------------------------------------------------------
@@ -43,6 +52,7 @@ std::string g_mixxxDir;
 int    g_selected = 0;            // index into g_tracks (Knob 2)
 mxb::Waveform g_wf;               // currently loaded waveform
 double g_scroll = 0.0;            // view start as fraction 0..1 (Knob 1)
+int    g_selectAccum = 0;         // unspent Knob 2 ticks (gates track stepping)
 bool   g_dirty0 = true, g_dirty1 = true;  // which screen needs a redraw
 
 // Colors
@@ -170,19 +180,26 @@ void redraw() {
 }
 
 // ---- input -----------------------------------------------------------------
-// Apply a +1/-1 step to whichever control the knob drives.
+// Knob events arrive as a burst of +/-1 ticks per physical notch; handlers
+// only update state + set dirty flags (the throttled main loop does the slow
+// redraws), so a fast spin can't pile up a backlog of full-frame pushes.
 void scrub(int dir) {
-    g_scroll += dir * 0.04;
+    g_scroll += dir * SCRUB_PER_TICK;
     if (g_scroll < 0) g_scroll = 0;
     if (g_scroll > 1) g_scroll = 1;
     g_dirty1 = true;
-    std::fprintf(stderr, "  -> scrub dir=%d scroll=%.2f\n", dir, g_scroll);
 }
 
 void selectTrack(int dir) {
     int n = static_cast<int>(g_tracks.size());
     if (n <= 0) return;
-    g_selected = (g_selected + dir + n) % n;
+    // Accumulate ticks; only step a track once enough have piled up so a single
+    // notch doesn't skip (or wrap) the short list.
+    g_selectAccum += dir;
+    int steps = g_selectAccum / SELECT_TICKS;
+    if (steps == 0) return;
+    g_selectAccum -= steps * SELECT_TICKS;
+    g_selected = ((g_selected + steps) % n + n) % n;
     std::fprintf(stderr, "  -> select track #%d\n", g_selected);
     loadSelected();
 }
@@ -287,10 +304,21 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "ready: Knob 1 = scrub waveform, Knob 2 = change track. "
                          "Ctrl+C to exit.\n");
 
-    // Main loop: pump events; knobs set dirty flags; redraw changed screens.
+    // Main loop: pump events (knobs just set dirty flags), then redraw at most
+    // ~20 fps. Decoupling input from the slow 261KB push means a fast knob spin
+    // updates state many times but only emits a few frames, always the latest —
+    // no multi-second backlog of stale frames draining after you stop turning.
+    auto lastDraw = std::chrono::steady_clock::now();
     for (;;) {
         rebellion_loop(SLICE_MS);
-        if (g_dirty0 || g_dirty1) redraw();
+        if (!(g_dirty0 || g_dirty1)) continue;
+        auto now = std::chrono::steady_clock::now();
+        auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           now - lastDraw).count();
+        if (sinceMs >= REDRAW_MIN_MS) {
+            redraw();
+            lastDraw = now;
+        }
     }
     return 0;  // unreachable; Ctrl+C exits
 }
