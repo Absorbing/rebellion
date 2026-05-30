@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
             pump(3000);
         }
         std::cerr << "display-probe: sweep done. Report which COLOR appeared on "
-                     "which PHYSICAL screen (left/right). (Ctrl+C to exit.)\n";
+                     "which PHYSICAL screen (left/right).\n";
     } else {
         // Send the stripe pattern to display 0, observe, then display 1, observe.
         const std::vector<int> fb = buildPattern();
@@ -180,9 +180,13 @@ int main(int argc, char** argv) {
         sendToDisplay(g_serial, 1, fb);
         pump(OBSERVE_MS);
         std::cerr << "display-probe: done. OBSERVE BOTH PANELS and record A/B/C in "
-                     "V00_RESULTS.md. (Ctrl+C to exit.)\n";
+                     "V00_RESULTS.md.\n";
     }
 
-    rebellion_loop(0);
+    // Clean shutdown: stop Lua and release the NIHIA device grant so the next
+    // run can re-acquire. (Leaving rebellion_loop(0) running forever and then
+    // killing the window can strand the \\.\pipe\NIHWMainHandler grant.)
+    std::cerr << "display-probe: releasing device and exiting.\n";
+    rebellion(nullptr);
     return 0;
 }
