@@ -567,7 +567,7 @@ function _M:sendDataToDisplay(display, data)
     end
 --]]
     _display_cmd_blit(_data)
-    _display_cmd_end(_data)
+    _display_cmd_end(_data, display)
 
     local reqport = self:getReqPort()
     local res = niproto.PARSE_DISPLAY_RESULT(
