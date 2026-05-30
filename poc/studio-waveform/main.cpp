@@ -170,23 +170,27 @@ void redraw() {
 }
 
 // ---- input -----------------------------------------------------------------
-// Knob index comes as "KNOB1".."KNOB8"; rotation sign = direction.
-void onKnob(const std::string& knob, long rotation) {
-    int dir = (rotation > 0) ? 1 : -1;
-    if (knob == "KNOB1") {
-        // scrub the waveform view
-        g_scroll += dir * 0.02;
-        if (g_scroll < 0) g_scroll = 0;
-        if (g_scroll > 1) g_scroll = 1;
-        g_dirty1 = true;
-    } else if (knob == "KNOB2") {
-        // change track selection
-        int n = static_cast<int>(g_tracks.size());
-        if (n > 0) {
-            g_selected = (g_selected + dir + n) % n;
-            loadSelected();
-        }
-    }
+// Apply a +1/-1 step to whichever control the knob drives.
+void scrub(int dir) {
+    g_scroll += dir * 0.04;
+    if (g_scroll < 0) g_scroll = 0;
+    if (g_scroll > 1) g_scroll = 1;
+    g_dirty1 = true;
+    std::fprintf(stderr, "  -> scrub dir=%d scroll=%.2f\n", dir, g_scroll);
+}
+
+void selectTrack(int dir) {
+    int n = static_cast<int>(g_tracks.size());
+    if (n <= 0) return;
+    g_selected = (g_selected + dir + n) % n;
+    std::fprintf(stderr, "  -> select track #%d\n", g_selected);
+    loadSelected();
+}
+
+// Knob index comes as "KNOB1".."KNOB8"; direction string gives the sign.
+void onKnob(const std::string& knob, int dir) {
+    if (knob == "KNOB1")      scrub(dir);
+    else if (knob == "KNOB2") selectTrack(dir);
 }
 
 int rpc_callback(rebellion_message_format mf, rebellion_message_type,
@@ -197,22 +201,34 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
     catch (...) { return 0; }
 
     const std::string ev = j.value("event", "");
-    const json d = j.contains("data") ? j["data"] : json::object();
+    json d;
+    try { d = j.contains("data") ? j["data"] : json::object(); }
+    catch (...) { d = json::object(); }
 
     if (ev == "device.state") {
-        const std::string st = d.value("state", "");
+        std::string st;
+        try { st = d.value("state", ""); } catch (...) {}
         if (g_serial.empty() && d.contains("serial") &&
             (st == "ON" || st == "STATE_ON")) {
-            g_serial = d["serial"].is_string()
-                           ? d["serial"].get<std::string>()
-                           : std::to_string(d["serial"].get<long long>());
+            try {
+                g_serial = d["serial"].is_string()
+                               ? d["serial"].get<std::string>()
+                               : std::to_string(d["serial"].get<long long>());
+            } catch (...) {}
             std::fprintf(stderr, "device ON, serial=%s\n", g_serial.c_str());
         }
     } else if (ev == "KNOB_ROTATE") {
-        std::string knob = d.value("knob", "");
-        long rot = d.contains("rotation") && d["rotation"].is_number()
-                       ? d["rotation"].get<long>() : 0;
-        if (!knob.empty()) onKnob(knob, rot);
+        // Use the direction STRING (robust; avoids parsing the numeric field).
+        std::string knob, direction;
+        try { knob = d.value("knob", ""); direction = d.value("direction", ""); }
+        catch (...) {}
+        int dir = (direction == "CLOCKWISE") ? 1 : -1;
+        std::fprintf(stderr, "[event] KNOB_ROTATE knob=%s dir=%s\n",
+                     knob.c_str(), direction.c_str());
+        if (!knob.empty()) onKnob(knob, dir);
+    } else if (!ev.empty() && ev != "PAD_DATA") {
+        // Surface anything else (BTN_DATA, the 4-D jog, etc.) so we can see it.
+        std::fprintf(stderr, "[event] %s %s\n", ev.c_str(), d.dump().c_str());
     }
     return 0;
 }
