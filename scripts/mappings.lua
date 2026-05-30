@@ -6,7 +6,7 @@
 
 CONST_DEVICES = importDevices {
     { 0x1500, "MASCHINE_JAM", "MJAM", "Maschine Jam", niproto.CONST_PORT_MAIN },
-    { 0x1300, "MASCHINE_STUDIO", "MSTUDIO", "Maschine Studio", niproto.CONST_PORT_MAIN },
+    { 0x1300, "MASCHINE_STUDIO", "MSTUDIO", "Maschine Studio", niproto.CONST_PORT_MAIN, 103, 2, 272, 480 }, -- v0.0 Test 0.0.3: trial display config mirroring MK3 (ledcnt, dcnt, dheight, dwidth)
     { 0x1140, "MASCHINE_MK2", "MMK2", "Maschine MK2", niproto.CONST_PORT_MAIN },
     {  0x808, "MASCHINE_MK1", "MMK1", "Maschine MK1", niproto.CONST_PORT_MAIN },
     { 0x1200, "MASCHINE_MIKRO_MK2", "MMMK2", "Maschine Mikro MK2", niproto.CONST_PORT_MAIN },

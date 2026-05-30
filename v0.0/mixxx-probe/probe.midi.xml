@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!--
+  Mixxx Studio Bridge — v0.0 Test 0.0.4 (SPEC §0 Session 4)
+  Minimal controller mapping whose only job is to load probe.js, which probes
+  engine.getValue("[Channel1]", "file_path") and prints the result to the
+  Mixxx debug log (Help -> Logs).
+
+  Install: copy probe.midi.xml + probe.js to %APPDATA%\Mixxx\controllers\
+  Enable:  Mixxx Preferences -> Controllers -> "Studio Bridge file_path probe"
+  Then:    load a track on deck 1, check the log for "PROBE> file_path returned:"
+-->
+<MixxxControllerPreset mixxxVersion="2.4.0" schemaVersion="1">
+  <info>
+    <name>Studio Bridge file_path probe</name>
+    <author>Mixxx Studio Bridge (v0.0)</author>
+    <description>Diagnostic: confirms engine.getValue("[ChannelN]","file_path") works on this Mixxx version.</description>
+  </info>
+  <controller id="StudioBridgeProbe">
+    <scriptfiles>
+      <file filename="probe.js" functionprefix="Probe"/>
+    </scriptfiles>
+    <controls>
+      <!-- No physical controls; init() does the work. A dummy binding keeps
+           older Mixxx happy about a non-empty <controls> block. -->
+    </controls>
+    <outputs>
+    </outputs>
+  </controller>
+</MixxxControllerPreset>

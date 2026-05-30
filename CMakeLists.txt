@@ -50,3 +50,10 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 add_subdirectory(src-vendor)
 add_subdirectory(src)
+
+# === Mixxx Studio Bridge v0.0 probe tools === ---------------------------------
+# nihia_monitor (Test 0.0.2b) + display_probe (Test 0.0.3). See v0.0/README.md.
+option(REBELLION_BUILD_V00_PROBES "Build Mixxx Studio Bridge v0.0 probe tools" ON)
+if(REBELLION_BUILD_V00_PROBES)
+    add_subdirectory("v0.0")
+endif()
