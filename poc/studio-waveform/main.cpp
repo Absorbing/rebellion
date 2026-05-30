@@ -201,26 +201,38 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
     catch (...) { return 0; }
 
     const std::string ev = j.value("event", "");
+
+    // start.lua forwards {event=<name>, data=<event object>}. For device-level
+    // events (device.state) the payload fields sit directly under "data". For
+    // instance events (KNOB_ROTATE, BTN_DATA, PAD_DATA, ...) the dispatcher
+    // wraps the parsed fields one level deeper: the real fields live under
+    // data.data, alongside name/id/device/serial/self. Read the inner object
+    // when present so knob/button fields are actually visible.
     json d;
     try { d = j.contains("data") ? j["data"] : json::object(); }
     catch (...) { d = json::object(); }
+    json fields = d;
+    try {
+        if (d.is_object() && d.contains("data") && d["data"].is_object())
+            fields = d["data"];
+    } catch (...) {}
 
     if (ev == "device.state") {
         std::string st;
-        try { st = d.value("state", ""); } catch (...) {}
-        if (g_serial.empty() && d.contains("serial") &&
+        try { st = fields.value("state", ""); } catch (...) {}
+        if (g_serial.empty() && fields.contains("serial") &&
             (st == "ON" || st == "STATE_ON")) {
             try {
-                g_serial = d["serial"].is_string()
-                               ? d["serial"].get<std::string>()
-                               : std::to_string(d["serial"].get<long long>());
+                g_serial = fields["serial"].is_string()
+                               ? fields["serial"].get<std::string>()
+                               : std::to_string(fields["serial"].get<long long>());
             } catch (...) {}
             std::fprintf(stderr, "device ON, serial=%s\n", g_serial.c_str());
         }
     } else if (ev == "KNOB_ROTATE") {
         // Use the direction STRING (robust; avoids parsing the numeric field).
         std::string knob, direction;
-        try { knob = d.value("knob", ""); direction = d.value("direction", ""); }
+        try { knob = fields.value("knob", ""); direction = fields.value("direction", ""); }
         catch (...) {}
         int dir = (direction == "CLOCKWISE") ? 1 : -1;
         std::fprintf(stderr, "[event] KNOB_ROTATE knob=%s dir=%s\n",
@@ -228,7 +240,7 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
         if (!knob.empty()) onKnob(knob, dir);
     } else if (!ev.empty() && ev != "PAD_DATA") {
         // Surface anything else (BTN_DATA, the 4-D jog, etc.) so we can see it.
-        std::fprintf(stderr, "[event] %s %s\n", ev.c_str(), d.dump().c_str());
+        std::fprintf(stderr, "[event] %s %s\n", ev.c_str(), fields.dump().c_str());
     }
     return 0;
 }
