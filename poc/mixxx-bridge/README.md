@@ -60,10 +60,26 @@ ctest --test-dir build -R mxb_bridge_tests --output-on-failure
 RtMidi is fetched automatically (or vendor it at `poc/third_party/rtmidi/`).
 To build the core without MIDI I/O: `-DREBELLION_POC_RTMIDI=OFF`.
 
-## Next wiring step
+## Integration: `studio_bridge` (Stage 3)
 
-Drive the existing `studio_waveform` screens from `DeckState` instead of the
-local library browser: construct a `DeckModel` whose loader calls
-`resolveTrackByPath`, open a `MixxxListener` on `"Mixxx-State"`, and on
-`deck(1).dirty` re-render the waveform panel from `deck(1).waveform`. That makes
-"load a track in Mixxx → Studio screen updates" real end-to-end.
+`poc/studio-bridge/` wires this layer to the screens:
+
+```
+studio_bridge "C:\Users\<you>\AppData\Local\Mixxx" ["Mixxx-State"]
+```
+
+- `deck_panel.hpp` — renders one `DeckState` to a 480×272 panel (deck badge,
+  artist/title, BPM, full-track overview waveform + playhead, time + flags).
+- `main.cpp` — reuses the proven studio_waveform device/loop pattern. Opens the
+  loopMIDI port via `MixxxListener`, drains decoded events on the main thread
+  into a `DeckModel` (loader = `resolveTrackByPath`), and renders
+  **display 0 = Deck A (ch1)**, **display 1 = Deck B (ch2)**, throttled to ~30fps.
+
+RtMidi runs MIDI on its own thread; events cross to the single-threaded device
+loop via a mutex-guarded queue, so `rebellion_loop`/`rebellion_rpc` stay on main.
+
+Verified off-device: `mxb_deck_panel_tests` renders loaded / empty / no-waveform
+panels and confirms each encodes through the RLE command path. `main.cpp`
+compiles against rebellion.h. The two live seams (SQLite resolver, loopMIDI
+listener) run for the first time on the Windows rig — by design, they're the
+*only* unproven parts left.

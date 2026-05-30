@@ -113,3 +113,26 @@ add_executable(mxb_bridge_tests
 target_link_libraries(mxb_bridge_tests PRIVATE mxb_mixxx_bridge)
 enable_testing()
 add_test(NAME mxb_bridge_tests COMMAND mxb_bridge_tests)
+
+# Deck-panel render smoke test (no device).
+add_executable(mxb_deck_panel_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-bridge/test_deck_panel.cpp
+)
+target_include_directories(mxb_deck_panel_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-waveform   # framebuffer.hpp + font
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-bridge
+)
+target_link_libraries(mxb_deck_panel_tests PRIVATE mxb_mixxx_bridge)
+add_test(NAME mxb_deck_panel_tests COMMAND mxb_deck_panel_tests)
+
+# --- Stage 3 integration: studio_bridge (live Mixxx -> A/B deck screens) -------
+add_executable(studio_bridge
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-bridge/main.cpp
+)
+target_include_directories(studio_bridge PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${nlohmann-json_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-waveform   # framebuffer.hpp + font
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-bridge
+)
+target_link_libraries(studio_bridge PRIVATE mxb_mixxx_bridge librebellion)
