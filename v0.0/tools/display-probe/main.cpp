@@ -69,6 +69,11 @@ std::vector<int> buildPattern() {
     return fb;
 }
 
+// Solid full-screen RGB565 fill (for the display-index sweep).
+std::vector<int> buildSolid(uint16_t color) {
+    return std::vector<int>(static_cast<size_t>(WIDTH) * HEIGHT, color);
+}
+
 // Pump the event loop for roughly ms milliseconds in SLICE_MS slices.
 void pump(int ms) {
     for (int elapsed = 0; elapsed < ms; elapsed += SLICE_MS)
@@ -125,7 +130,11 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type /*mt*/,
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    bool sweep = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--sweep") sweep = true;
+
     std::cerr << "display-probe: registering callback, claiming Studio "
                  "(config.lua devices = MASCHINE_STUDIO)\n";
     rebellion(rpc_callback);
@@ -143,17 +152,37 @@ int main() {
     std::cerr << "display-probe: warming up instance (" << INSTANCE_WARMUP_MS << " ms)\n";
     pump(INSTANCE_WARMUP_MS);
 
-    // 3. Send the pattern to display 0, observe, then display 1, observe.
-    const std::vector<int> fb = buildPattern();
-    std::cerr << "display-probe: sending pattern to display 0\n";
-    sendToDisplay(g_serial, 0, fb);
-    pump(OBSERVE_MS);
-    std::cerr << "display-probe: sending pattern to display 1\n";
-    sendToDisplay(g_serial, 1, fb);
-    pump(OBSERVE_MS);
+    if (sweep) {
+        // Find which display index drives which physical panel: send a distinct
+        // solid color to indices 0..3 in turn. Watch BOTH panels and report
+        // which color lands on which screen (esp. the right/second one).
+        struct { int idx; uint16_t color; const char* name; } steps[] = {
+            {0, 0xF800, "RED"},   // index 0
+            {1, 0x07E0, "GREEN"}, // index 1
+            {2, 0x001F, "BLUE"},  // index 2
+            {3, 0xFFE0, "YELLOW"} // index 3
+        };
+        for (auto& s : steps) {
+            std::cerr << "display-probe: SWEEP filling display index " << s.idx
+                      << " with " << s.name << " — watch both panels\n";
+            sendToDisplay(g_serial, s.idx, buildSolid(s.color));
+            pump(3000);
+        }
+        std::cerr << "display-probe: sweep done. Report which COLOR appeared on "
+                     "which PHYSICAL screen (left/right). (Ctrl+C to exit.)\n";
+    } else {
+        // Send the stripe pattern to display 0, observe, then display 1, observe.
+        const std::vector<int> fb = buildPattern();
+        std::cerr << "display-probe: sending pattern to display 0\n";
+        sendToDisplay(g_serial, 0, fb);
+        pump(OBSERVE_MS);
+        std::cerr << "display-probe: sending pattern to display 1\n";
+        sendToDisplay(g_serial, 1, fb);
+        pump(OBSERVE_MS);
+        std::cerr << "display-probe: done. OBSERVE BOTH PANELS and record A/B/C in "
+                     "V00_RESULTS.md. (Ctrl+C to exit.)\n";
+    }
 
-    std::cerr << "display-probe: done. OBSERVE BOTH PANELS and record A/B/C in "
-                 "V00_RESULTS.md. (Ctrl+C to exit.)\n";
     rebellion_loop(0);
     return 0;
 }
