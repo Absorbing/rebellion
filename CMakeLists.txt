@@ -57,3 +57,11 @@ option(REBELLION_BUILD_V00_PROBES "Build Mixxx Studio Bridge v0.0 probe tools" O
 if(REBELLION_BUILD_V00_PROBES)
     add_subdirectory("v0.0")
 endif()
+
+# === Mixxx Studio Bridge PoC tools === ----------------------------------------
+# Stage 1.5 waveform_decode (sqlite3+zlib+protobuf) and later the render+knob
+# PoC. See poc/. Fetches zlib + sqlite3 amalgamation at configure time.
+option(REBELLION_BUILD_POC "Build Mixxx Studio Bridge PoC tools" ON)
+if(REBELLION_BUILD_POC)
+    add_subdirectory(poc)
+endif()

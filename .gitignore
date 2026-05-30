@@ -3,3 +3,6 @@ src-vendor/
 __pycache__/
 *.pyc
 .DS_Store
+
+# PoC fetched/vendored deps
+poc/third_party/
