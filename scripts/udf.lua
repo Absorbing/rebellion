@@ -11,7 +11,11 @@ local dispatcher = require 'dispatcher'()
 
 local tinsert = table.insert
 
-local dispatchMapEvents = true
+-- Demo event mapping OFF by default: the bundled udf demo would otherwise
+-- listen to the same knob/pad events as the Mixxx Studio Bridge PoC and redraw
+-- the panels (full-frame), corrupting our output and clogging the pipe. Press
+-- CHANNEL to toggle the demo back on if you want it.
+local dispatchMapEvents = false
 local _selectedDisplay = 0
 local _selectedColor = {
     R = 100,
