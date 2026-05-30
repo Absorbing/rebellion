@@ -15,62 +15,74 @@ using namespace mxb;
 static int g_fail = 0;
 #define CHECK(cond, msg) do { if (!(cond)) { std::printf("FAIL: %s\n", msg); ++g_fail; } } while (0)
 
-// Mirror of the SPEC §11.4 controller-script encoder (StudioBridge.encodePath):
-// build the F0 7D <type> <deck> <MSB-packed UTF-8> F7 stream the daemon receives.
-static std::vector<uint8_t> encodePathSysex(int deck, int msgType, const std::string& path) {
-    std::vector<uint8_t> bytes = {0xF0, 0x7D,
-                                  static_cast<uint8_t>(msgType),
-                                  static_cast<uint8_t>(deck)};
-    // UTF-8 bytes of the path (the test paths below are already UTF-8).
-    std::vector<uint8_t> utf8(path.begin(), path.end());
-    for (size_t i = 0; i < utf8.size(); i += 7) {
+// Mirror of the Mixxx-side encoder (.scripts.js StudioBridge.encodeId): build the
+// F0 7D <type> <deck> <MSB-packed 13-byte fingerprint> F7 stream. The 13-byte
+// payload is big-endian: samples(4) samplerate(3) durationMs(4) bpmCenti(2).
+static std::vector<uint8_t> packPayload(const std::vector<uint8_t>& raw) {
+    std::vector<uint8_t> out;
+    for (size_t i = 0; i < raw.size(); i += 7) {
         uint8_t msb = 0;
-        for (size_t j = 0; j < 7 && i + j < utf8.size(); ++j)
-            if (utf8[i + j] & 0x80) msb |= (1 << j);
-        bytes.push_back(msb);
-        for (size_t j = 0; j < 7 && i + j < utf8.size(); ++j)
-            bytes.push_back(utf8[i + j] & 0x7F);
+        for (size_t j = 0; j < 7 && i + j < raw.size(); ++j)
+            if (raw[i + j] & 0x80) msb |= (1 << j);
+        out.push_back(msb);
+        for (size_t j = 0; j < 7 && i + j < raw.size(); ++j)
+            out.push_back(raw[i + j] & 0x7F);
     }
-    bytes.push_back(0xF7);
-    return bytes;
+    return out;
+}
+static std::vector<uint8_t> encodeIdSysex(int deck, const TrackFingerprint& fp) {
+    auto be = [](std::vector<uint8_t>& v, uint32_t x, int n) {
+        for (int k = n - 1; k >= 0; --k) v.push_back((x >> (8 * k)) & 0xFF);
+    };
+    std::vector<uint8_t> raw;
+    be(raw, fp.samples, 4); be(raw, fp.samplerate, 3);
+    be(raw, fp.durationMs, 4); be(raw, fp.bpmCenti, 2);
+    std::vector<uint8_t> msg = {0xF0, 0x7D, 0x01, static_cast<uint8_t>(deck)};
+    auto packed = packPayload(raw);
+    msg.insert(msg.end(), packed.begin(), packed.end());
+    msg.push_back(0xF7);
+    return msg;
 }
 
 int main() {
-    // --- 1. SysEx 7-bit unpack: the SPEC §3.4 worked example -----------------
+    // --- 1. 7-bit unpack: the SPEC §3.4 worked example -----------------------
     // Input [A1 B2 C3 04 05 06 07 08] -> MSB 0x07, data [21 32 43 04 05 06 07] + [08].
     {
         const uint8_t body[] = {0x01, 0x01,             // msgType=1, deck=1
                                 0x07, 0x21,0x32,0x43,0x04,0x05,0x06,0x07,  // group 1
                                 0x00, 0x08};            // group 2: msb=0, one byte 0x08
-        int t=0, d=0; std::string p;
-        bool ok = MidiDecoder::decodeTrackPathSysex(body, sizeof(body), t, d, p);
-        CHECK(ok, "worked-example decode returns true");
+        int t=0, d=0; std::vector<uint8_t> p;
+        bool ok = MidiDecoder::unpackSysex(body, sizeof(body), t, d, p);
+        CHECK(ok, "worked-example unpack returns true");
         CHECK(t == 1 && d == 1, "worked-example type/deck");
         const uint8_t want[] = {0xA1,0xB2,0xC3,0x04,0x05,0x06,0x07,0x08};
         CHECK(p.size() == 8, "worked-example length");
         bool match = p.size() == 8;
         for (size_t i = 0; i < p.size() && i < 8; ++i)
-            if (static_cast<uint8_t>(p[i]) != want[i]) match = false;
+            if (p[i] != want[i]) match = false;
         CHECK(match, "worked-example bytes reconstruct A1 B2 C3 04..08");
     }
 
-    // --- 2. Round-trip arbitrary paths through encode -> decode --------------
+    // --- 2. Round-trip fingerprints through encode -> decode -----------------
     {
-        const char* paths[] = {
-            "C:/Music/track.mp3",
-            "C:/Users/huhom/Music/\xC3\xA9" "p\xC3\xA9" "e \xE2\x99\xA5 mix.flac",  // UTF-8: epee (heart)
-            "",  // empty path (clear-ish)
-            "/a/very/long/path/that/spans/multiple/seven/byte/groups/song.wav",
+        TrackFingerprint fps[] = {
+            {0, 0, 0, 0},                              // zero (high-bit-free)
+            {10584000, 44100, 240000, 12800},          // 4:00 @44.1k, 128.00 bpm
+            {0xFFFFFFFF, 192000, 0xFFFFFFFF, 0xFFFF},  // all bits set (stresses MSB pack)
+            {529200, 48000, 11025, 17499},             // odd values
         };
-        for (const char* cp : paths) {
-            std::string path = cp;
-            auto msg = encodePathSysex(2, 0x01, path);
-            std::string got;
+        for (const auto& fp : fps) {
+            auto msg = encodeIdSysex(3, fp);
+            TrackFingerprint got;
+            bool sawIdentity = false;
             MidiDecoder dec([&](const BridgeEvent& e) {
-                if (e.type == BridgeEventType::TrackPath) got = e.text;
+                if (e.type == BridgeEventType::TrackIdentity) { got = e.fp; sawIdentity = true; }
             });
             dec.onMessage(msg);
-            CHECK(got == path, (std::string("roundtrip path: ") + path).c_str());
+            CHECK(sawIdentity, "identity event emitted");
+            CHECK(got.samples == fp.samples && got.samplerate == fp.samplerate &&
+                  got.durationMs == fp.durationMs && got.bpmCenti == fp.bpmCenti,
+                  "fingerprint round-trips through SysEx pack");
         }
     }
 
@@ -110,14 +122,16 @@ int main() {
               evs[1].type == BridgeEventType::TrackLoaded, "sampler 35 loaded");
     }
 
-    // --- 5. Deck model folds events + invokes loader on track path -----------
+    // --- 5. Deck model folds events + invokes loader on track identity -------
     {
         int loaderCalls = 0;
-        DeckModel model([&](const std::string& path, std::string& artist,
-                            std::string& title, Waveform& wf) {
+        TrackFingerprint seen;
+        DeckModel model([&](const TrackFingerprint& fp, std::string& artist,
+                            std::string& title, double& bpm, Waveform& wf) {
             ++loaderCalls;
-            if (path.empty()) return false;
-            artist = "Artist"; title = "Title";
+            seen = fp;
+            if (fp.empty()) return false;
+            artist = "Artist"; title = "Title"; bpm = 124.5;
             wf.visual_sample_rate = 441.0;
             wf.mono.assign(1000, 100);
             return true;
@@ -126,18 +140,21 @@ int main() {
         auto feed = [&](const BridgeEvent& e){ model.apply(e); };
         MidiDecoder dec(feed);
 
-        dec.onMessage(encodePathSysex(1, 0x01, "C:/song.mp3"));
+        TrackFingerprint fp{10584000, 44100, 240000, 12800};
+        dec.onMessage(encodeIdSysex(1, fp));
         dec.onMessage({0x90, 0x10, 0x7F});  // play on
-        dec.onMessage({0xB0, 0x10, 64});    // bpm
 
         const DeckState& d1 = model.deck(1);
-        CHECK(loaderCalls == 1, "loader called once on track path");
+        CHECK(loaderCalls == 1, "loader called once on track identity");
+        CHECK(seen.samples == fp.samples, "loader received the fingerprint");
         CHECK(d1.loaded && d1.hasWaveform, "deck1 loaded with waveform");
         CHECK(d1.title == "Title", "deck1 title from loader");
+        CHECK(d1.bpm == 124.5, "deck1 bpm from loader (DB)");
         CHECK(d1.playing, "deck1 playing after play-on");
         CHECK(d1.waveform.mono.size() == 1000, "deck1 waveform frames");
 
-        dec.onMessage(encodePathSysex(1, 0x02, ""));  // clear
+        // clear: F0 7D 02 <deck> F7
+        dec.onMessage({0xF0, 0x7D, 0x02, 0x01, 0xF7});
         CHECK(!model.deck(1).loaded, "deck1 cleared");
     }
 

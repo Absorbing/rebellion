@@ -81,10 +81,27 @@ numeric IDs. Values read from the `MAPPING>` log lines.
     now calls `rebellion(nullptr)` to release the device and exit. If stranded:
     kill stray `display_probe.exe`, restart NIHardwareService, replug Studio.
 
-## Test 0.0.4 — Mixxx file_path — ⏳ PENDING
-- Not yet run. Use `v0.0/mixxx-probe/probe.{midi.xml,js}` (no build needed):
-  copy to `%APPDATA%\Mixxx\controllers\`, enable in Preferences → Controllers,
-  load a track on deck 1, check Help → Logs for `PROBE> ... file_path returned`.
+## Test 0.0.4 — Mixxx file_path — ❌ RESOLVED BY DOCS (probe not needed): no path
+- **Finding:** `file_path` is **not a Mixxx control.** Mixxx controller scripting
+  (QJSEngine) exposes only *numeric* controls via `engine.getValue` — there is no
+  string/metadata accessor and no `[ChannelN] file_path`. Confirmed against the
+  Mixxx 2.4 control reference (manual appendix `mixxx_controls`) and the MIDI
+  scripting wiki. So `engine.getValue(grp,"file_path")` returns `undefined` — the
+  probe would FAIL, and the SPEC §3.4 "send the path as SysEx" mechanism is
+  **infeasible.** (No hardware session spent — caught by doc review.)
+- **Pivot (the §3.4 SQLite fallback the plan called for):** identify the loaded
+  track by a **numeric fingerprint** of the read-only controls Mixxx *does*
+  expose on load — `track_samples` (near-unique), `track_samplerate`, `duration`,
+  `file_bpm` — and match it against `library` rows (`samples ≈ duration ×
+  samplerate × channels`, all stored). Then scrape metadata + waveform as before.
+- **Implemented + cross-checked off-device:** the Mixxx-side emitter
+  (`mixxx/Mixxx-Studio-Bridge.{midi.xml,scripts.js}`) and the bridge decoder/
+  resolver (`poc/mixxx-bridge/`) agree end-to-end — JS-encoded SysEx decodes to
+  the exact fingerprint in C++ (verified via a Node→C++ harness). The 7-bit SysEx
+  transport from the original §3.4 is reused unchanged; only the payload differs.
+- **Still needs the rig:** confirm `track_samples`/`duration` are populated when
+  `track_loaded` fires, and that the fingerprint matches uniquely against the real
+  `mixxxdb.sqlite` (duration float precision / no collisions in this library).
 
 ---
 

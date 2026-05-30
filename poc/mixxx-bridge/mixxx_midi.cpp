@@ -4,33 +4,47 @@
 
 namespace mxb {
 
-bool MidiDecoder::decodeTrackPathSysex(const uint8_t* body, size_t len,
-                                       int& msgType, int& deck, std::string& path) {
-    // body starts at <msg_type> <deck> <packed path...> (F0 7D already stripped,
-    // F7 already stripped). Need at least the two header bytes.
+bool MidiDecoder::unpackSysex(const uint8_t* body, size_t len,
+                              int& msgType, int& deck, std::vector<uint8_t>& payload) {
+    // body starts at <msg_type> <deck> <packed payload...> (F0 7D and F7 already
+    // stripped). Need at least the two header bytes.
     if (len < 2) return false;
     msgType = body[0];
     deck    = body[1];
-    path.clear();
+    payload.clear();
 
-    // 7-bit MSB-pack (SPEC §3.4): each group is 1 MSB byte then up to 7 data
-    // bytes; bit j of the MSB byte is the top bit of data byte j.
+    // 7-bit MSB-pack (SPEC §3.4 transport): each group is 1 MSB byte then up to 7
+    // data bytes; bit j of the MSB byte is the top bit of data byte j.
     size_t i = 2;
     while (i < len) {
         uint8_t msb = body[i++];
         for (int j = 0; j < 7 && i < len; ++j) {
             uint8_t b = body[i++] & 0x7F;
             if (msb & (1 << j)) b |= 0x80;
-            path.push_back(static_cast<char>(b));
+            payload.push_back(b);
         }
     }
+    return true;
+}
+
+bool MidiDecoder::parseFingerprint(const std::vector<uint8_t>& p, TrackFingerprint& out) {
+    if (p.size() < kFingerprintBytes) return false;
+    auto u = [&](size_t off, int n) {
+        uint32_t v = 0;
+        for (int k = 0; k < n; ++k) v = (v << 8) | p[off + k];
+        return v;
+    };
+    out.samples    = u(0, 4);
+    out.samplerate = u(4, 3);
+    out.durationMs = u(7, 4);
+    out.bpmCenti   = static_cast<uint16_t>(u(11, 2));
     return true;
 }
 
 void MidiDecoder::onMessage(const uint8_t* bytes, size_t len) {
     if (len == 0) return;
 
-    // SysEx: F0 7D <type> <deck> <packed path> F7
+    // SysEx: F0 7D <type> <deck> <packed fingerprint> F7
     if (bytes[0] == 0xF0) {
         if (len < 2 || bytes[1] != 0x7D) return;       // not our manufacturer id
         size_t end = len;
@@ -38,15 +52,20 @@ void MidiDecoder::onMessage(const uint8_t* bytes, size_t len) {
         const uint8_t* body = bytes + 2;                // skip F0 7D
         size_t blen = (end > 2) ? end - 2 : 0;
         int msgType = 0, deck = 0;
-        std::string path;
-        if (!decodeTrackPathSysex(body, blen, msgType, deck, path)) return;
+        std::vector<uint8_t> payload;
+        if (!unpackSysex(body, blen, msgType, deck, payload)) return;
         BridgeEvent e;
         e.target  = (deck >= 1 && deck <= 4) ? Target::Deck : Target::Sampler;
         e.channel = deck;
         e.deck    = deck;
-        if (msgType == 0x01) { e.type = BridgeEventType::TrackPath; e.text = std::move(path); }
-        else if (msgType == 0x02) { e.type = BridgeEventType::TrackCleared; }
-        else return;  // unknown/future sub-type (0x03 sampler path, etc.)
+        if (msgType == 0x01) {
+            if (!parseFingerprint(payload, e.fp)) return;
+            e.type = BridgeEventType::TrackIdentity;
+        } else if (msgType == 0x02) {
+            e.type = BridgeEventType::TrackCleared;
+        } else {
+            return;  // unknown/future sub-type
+        }
         sink_(e);
         return;
     }

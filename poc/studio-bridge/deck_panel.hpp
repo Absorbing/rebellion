@@ -67,7 +67,7 @@ inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d) {
 
     std::string label = d.artist.empty() ? d.title
                                           : (d.artist + " - " + d.title);
-    if (label.empty()) label = d.path;
+    if (label.empty()) label = "track not in library";  // fingerprint had no match
     // truncate to fit before the BPM readout
     const int bpmRoom = 96;
     size_t maxChars = static_cast<size_t>((kW - 30 - bpmRoom) / 6);

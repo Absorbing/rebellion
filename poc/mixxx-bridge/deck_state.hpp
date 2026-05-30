@@ -16,10 +16,10 @@
 namespace mxb {
 
 struct DeckState {
-    bool        loaded   = false;
-    std::string artist;
-    std::string title;
-    std::string path;          // last path Mixxx reported
+    bool             loaded   = false;
+    std::string      artist;
+    std::string      title;
+    TrackFingerprint fp;         // last identity Mixxx reported
     double      bpm      = 0.0;
     double      position = 0.0;  // 0..1
     double      rate     = 1.0;
@@ -35,10 +35,10 @@ struct DeckState {
 
 class DeckModel {
 public:
-    // Loader: given a track path, fill artist/title/waveform. Returns false if
-    // unresolved (DeckState keeps whatever Mixxx sent, just no waveform).
-    using Loader = std::function<bool(const std::string& path, std::string& artist,
-                                      std::string& title, Waveform& wf)>;
+    // Loader: given a track fingerprint, fill artist/title/bpm/waveform. Returns
+    // false if unresolved (DeckState keeps what Mixxx sent, just no waveform).
+    using Loader = std::function<bool(const TrackFingerprint& fp, std::string& artist,
+                                      std::string& title, double& bpm, Waveform& wf)>;
 
     explicit DeckModel(Loader loader) : loader_(std::move(loader)) {}
 

@@ -136,18 +136,20 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "studio_bridge: Mixxx dir = %s, MIDI port = \"%s\"\n",
                  g_mixxxDir.c_str(), midiPort.c_str());
 
-    // Deck model: on a track-path event, resolve+decode against mixxxdb.sqlite.
-    mxb::DeckModel model([&](const std::string& path, std::string& artist,
-                             std::string& title, mxb::Waveform& wf) {
+    // Deck model: on a track-identity event, match the fingerprint to a library
+    // row and decode its waveform from mixxxdb.sqlite + analysis/.
+    mxb::DeckModel model([&](const mxb::TrackFingerprint& fp, std::string& artist,
+                             std::string& title, double& bpm, mxb::Waveform& wf) {
         mxb::ResolvedTrack rt;
         std::string err;
-        if (!mxb::resolveTrackByPath(g_mixxxDir, path, rt, err)) {
-            std::fprintf(stderr, "resolve failed for %s: %s\n", path.c_str(), err.c_str());
+        if (!mxb::resolveTrackByFingerprint(g_mixxxDir, fp, rt, err)) {
+            std::fprintf(stderr, "resolve failed: %s\n", err.c_str());
             return false;
         }
         artist = rt.artist; title = rt.title; wf = std::move(rt.waveform);
-        std::fprintf(stderr, "loaded: %s - %s (%zu frames)\n",
-                     artist.c_str(), title.c_str(), wf.mono.size());
+        if (rt.bpm > 0) bpm = rt.bpm;
+        std::fprintf(stderr, "loaded: %s - %s [%s] (%zu frames)\n",
+                     artist.c_str(), title.c_str(), rt.location.c_str(), wf.mono.size());
         return true;
     });
 

@@ -20,7 +20,7 @@ namespace mxb {
 // What a decoded message means to the bridge. One MIDI message -> one event.
 enum class BridgeEventType {
     Unknown,
-    TrackPath,     // SysEx 0x01: deck got a track; `text` = UTF-8 path
+    TrackIdentity, // SysEx 0x01: deck got a track; `fp` = numeric fingerprint
     TrackCleared,  // SysEx 0x02: deck unloaded
     Play,          // bool in `value` (0/1)
     TrackLoaded,   // bool
@@ -38,6 +38,20 @@ enum class BridgeEventType {
     MasterBpm,     // float (internal clock bpm)
 };
 
+// Numeric track fingerprint (replaces the SPEC §3.4 file-path mechanism, which
+// is infeasible: Mixxx controller scripting exposes no string controls and has
+// no `file_path` control — confirmed against the 2.4 control reference). These
+// are all read-only numeric [ChannelN] controls Mixxx *does* expose on load; the
+// bridge matches them against library rows (track_resolver). `samples` is the
+// near-unique key (exact audio sample count); the rest disambiguate/corroborate.
+struct TrackFingerprint {
+    uint32_t samples    = 0;  // [ChannelN],track_samples
+    uint32_t samplerate = 0;  // [ChannelN],track_samplerate
+    uint32_t durationMs = 0;  // [ChannelN],duration * 1000
+    uint16_t bpmCenti   = 0;  // [ChannelN],file_bpm * 100
+    bool empty() const { return samples == 0 && samplerate == 0; }
+};
+
 // MIDI channel role (SPEC §3.3.1). 1-indexed channels map to these.
 enum class Target { None, Deck, Sampler, Master };
 
@@ -48,13 +62,18 @@ struct BridgeEvent {
     int     deck    = 0;     // 1..4 for Deck target; sampler index 1..64 for Sampler
     int     index   = 0;     // hotcue / sub-index where relevant
     double  value   = 0.0;   // numeric payload (already converted to real units)
-    std::string text;        // path for TrackPath
+    TrackFingerprint fp;     // populated for TrackIdentity
 };
 
 // BPM CC mapping (SPEC §3.3.2): bpm sent as value over a 60..187.5 range across
 // 0..127. These mirror the <minimum>/<maximum> in the Mixxx mapping (§11.3).
 constexpr double kBpmMin = 60.0;
 constexpr double kBpmMax = 187.5;
+
+// Raw byte length of the fingerprint payload carried inside the identity SysEx,
+// before 7-bit packing: samples(4) + samplerate(3) + durationMs(4) + bpm(2),
+// all big-endian. The Mixxx-side encoder (the .scripts.js) must match this.
+constexpr size_t kFingerprintBytes = 13;
 
 class MidiDecoder {
 public:
@@ -67,11 +86,15 @@ public:
     void onMessage(const uint8_t* bytes, size_t len);
     void onMessage(const std::vector<uint8_t>& m) { onMessage(m.data(), m.size()); }
 
-    // Decode a track-path SysEx body (the bytes between F0 7D and F7, i.e.
-    // starting at <msg_type>). Exposed for unit testing the 7-bit unpack.
-    // Returns true and fills type/deck/path on a well-formed message.
-    static bool decodeTrackPathSysex(const uint8_t* body, size_t len,
-                                     int& msgType, int& deck, std::string& path);
+    // Reverse the 7-bit MSB-pack (SPEC §3.4 transport): `body` runs from
+    // <msg_type> to just before F7. Fills msgType/deck and the unpacked payload
+    // bytes. Exposed for unit testing the pack. Returns false if too short.
+    static bool unpackSysex(const uint8_t* body, size_t len,
+                            int& msgType, int& deck, std::vector<uint8_t>& payload);
+
+    // Interpret an unpacked identity payload (kFingerprintBytes, big-endian).
+    static bool parseFingerprint(const std::vector<uint8_t>& payload,
+                                 TrackFingerprint& out);
 
 private:
     void onChannelVoice(uint8_t status, uint8_t d1, uint8_t d2);

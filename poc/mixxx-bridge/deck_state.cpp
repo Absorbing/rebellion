@@ -13,18 +13,22 @@ void DeckModel::apply(const BridgeEvent& e) {
     DeckState& d = decks_[n];
 
     switch (e.type) {
-        case BridgeEventType::TrackPath: {
-            d.path = e.text;
+        case BridgeEventType::TrackIdentity: {
+            d.fp = e.fp;
             d.loaded = true;
             d.hasWaveform = false;
             d.artist.clear();
             d.title.clear();
+            // bpm from the DB by default; fall back to the fingerprint's file_bpm.
+            d.bpm = e.fp.bpmCenti / 100.0;
             if (loader_) {
                 Waveform wf;
                 std::string artist, title;
-                if (loader_(e.text, artist, title, wf)) {
+                double bpm = d.bpm;
+                if (loader_(e.fp, artist, title, bpm, wf)) {
                     d.artist = std::move(artist);
                     d.title  = std::move(title);
+                    d.bpm    = bpm;
                     d.waveform = std::move(wf);
                     d.hasWaveform = true;
                 }

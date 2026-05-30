@@ -1,54 +1,64 @@
 # Mixxx Bridge — input layer (Stage 3)
 
-The daemon's **Mixxx → Studio** half (SPEC §3.3, §3.4): listen to Mixxx state on
-a loopMIDI port, decode it, resolve loaded tracks to their analysed waveforms,
-and fold everything into per-deck state the renderer draws.
+The daemon's **Mixxx → Studio** half: listen to Mixxx state on a virtual MIDI
+port, decode it, resolve the loaded track to its analysed waveform, and fold
+everything into per-deck state the renderer draws.
+
+> **§3.4 correction — identity is a fingerprint, not a path.** The SPEC assumed a
+> Mixxx controller script could read the track's `file_path` and send it as
+> SysEx. It can't: Mixxx scripting exposes **no string controls** and has no
+> `file_path` control (Test 0.0.4, confirmed against the 2.4 control reference).
+> Instead the script sends a **numeric fingerprint** of the read-only controls
+> Mixxx *does* expose on load — `track_samples` / `track_samplerate` / `duration`
+> / `file_bpm` — and the bridge matches it to a `library` row. The 7-bit SysEx
+> transport is reused unchanged; only the payload differs.
 
 ```
-Mixxx (stock + StudioBridge.js)
-   │  loopMIDI "Mixxx-State"
+Mixxx (stock + Mixxx-Studio-Bridge.scripts.js)
+   │  virtual MIDI "Mixxx-State" (loopMIDI / teVirtualMIDI)
    ▼
 MixxxListener (RtMidi)        ── thin I/O shell, mixxx_listener.*
    ▼  raw MIDI bytes
 MidiDecoder                   ── pure logic, mixxx_midi.*   ◀── unit-tested
-   ▼  BridgeEvent
-DeckModel  ──loader──▶ resolveTrackByPath ──▶ mixxxdb.sqlite + analysis/{id}
+   ▼  BridgeEvent{ TrackFingerprint }
+DeckModel ─loader─▶ resolveTrackByFingerprint ─▶ mixxxdb.sqlite + analysis/{id}
    ▼                          (track_resolver.*, reuses mxb_decode)
 DeckState[1..4]               ── what the renderer reads (deck_state.*)
 ```
+
+The Mixxx-side emitter lives in `mixxx/Mixxx-Studio-Bridge.{midi.xml,scripts.js}`.
 
 ## Files
 
 | File | Role | Tested off-device |
 |---|---|---|
-| `mixxx_midi.{hpp,cpp}` | Decode MIDI + SysEx → `BridgeEvent` (§3.3/§3.4) | ✅ `test_mixxx_midi.cpp` |
-| `track_resolver.{hpp,cpp}` | path → `library.id` → analysis blob → `Waveform` (§3.4) | ⬜ needs a real `mixxxdb.sqlite` |
+| `mixxx_midi.{hpp,cpp}` | Decode MIDI + SysEx → `BridgeEvent`; unpack identity fingerprint | ✅ `test_mixxx_midi.cpp` |
+| `track_resolver.{hpp,cpp}` | fingerprint → `library.id` → analysis blob → `Waveform` | ⬜ needs a real `mixxxdb.sqlite` |
 | `deck_state.{hpp,cpp}` | fold events into per-deck state; trigger track load | ✅ |
-| `mixxx_listener.{hpp,cpp}` | RtMidi loopMIDI input shell | ⬜ needs loopMIDI (Windows) |
+| `mixxx_listener.{hpp,cpp}` | RtMidi virtual-port input shell | ⬜ needs loopMIDI (Windows) |
 | `test_mixxx_midi.cpp` | unit tests (incl. the §3.4 worked SysEx example) | ✅ |
 
 ## What's verified
 
-`mxb_bridge_tests` passes, covering the parts with real algorithmic risk:
+`mxb_bridge_tests` passes, plus a Node→C++ cross-language check:
 
-- **SysEx 7-bit MSB-pack/unpack** — the SPEC §3.4 worked example
-  (`A1 B2 C3 04 05 06 07 08`) reconstructs exactly, plus round-trips of ASCII,
-  UTF-8 (accents + multibyte), empty, and multi-group paths through an encoder
-  mirrored from the SPEC §11.4 controller script.
-- **Channel-voice tables** — deck play/bpm/position/hotcue and master crossfader
-  decode to the right `BridgeEvent` with correct units (BPM un-mapped from the
-  60–187.5 range; position 0..1; crossfader −1..+1).
-- **Sampler channel math** — ch5 note 0x02 → sampler 3, ch7 note 0x12 → sampler 35.
-- **Deck model** — a track-path SysEx invokes the loader once and lands a
-  waveform; play/bpm fold in; a clear (0x02) resets the deck.
+- **SysEx 7-bit MSB-pack/unpack** — the original §3.4 worked example
+  (`A1 B2 C3 04 05 06 07 08`) reconstructs exactly, plus fingerprint round-trips
+  including all-bits-set (the case that stresses the MSB collector).
+- **Cross-language seam** — bytes produced by the real `.scripts.js` packing
+  logic, run in Node, decode in the real C++ `MidiDecoder` to the exact
+  fingerprint (samples/samplerate/durationMs/bpmCenti, deck).
+- **Channel-voice tables** — deck play/position/hotcue + master crossfader decode
+  with correct units.
+- **Deck model** — a track-identity SysEx invokes the loader once with the
+  fingerprint and lands a waveform; play folds in; a clear (0x02) resets the deck.
 
 ## What still needs hardware / a real machine
 
-- `track_resolver` against a real `mixxxdb.sqlite` (the JOIN is written to §3.1/§3.4
-  but unproven against live data — verify the `library.location → track_locations.id`
-  direction on your DB).
-- `MixxxListener` against loopMIDI + the `StudioBridge.js` mapping actually
-  emitting SysEx on `track_loaded`.
+- `track_resolver` against a real `mixxxdb.sqlite`: confirm the fingerprint
+  matches **uniquely** (duration float precision, no collisions in this library).
+- The `.scripts.js` emitter actually populating `track_samples`/`duration` when
+  `track_loaded` fires, over a real loopMIDI port into `MixxxListener`.
 
 ## Build & test
 
@@ -72,7 +82,7 @@ studio_bridge "C:\Users\<you>\AppData\Local\Mixxx" ["Mixxx-State"]
   artist/title, BPM, full-track overview waveform + playhead, time + flags).
 - `main.cpp` — reuses the proven studio_waveform device/loop pattern. Opens the
   loopMIDI port via `MixxxListener`, drains decoded events on the main thread
-  into a `DeckModel` (loader = `resolveTrackByPath`), and renders
+  into a `DeckModel` (loader = `resolveTrackByFingerprint`), and renders
   **display 0 = Deck A (ch1)**, **display 1 = Deck B (ch2)**, throttled to ~30fps.
 
 RtMidi runs MIDI on its own thread; events cross to the single-threaded device

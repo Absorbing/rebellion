@@ -1,12 +1,19 @@
-// Mixxx Studio Bridge — resolve a track file path to its analysed waveform.
+// Mixxx Studio Bridge — resolve a loaded track to its analysed waveform.
 //
-// SPEC §3.4 lookup flow: Mixxx sends the file path on track_loaded → we resolve
-// path -> library.id -> newest detailed (type=1) analysis id -> decode the blob.
-// Read-only + immutable open, safe while Mixxx runs (WAL); mirrors mixxxdb.cpp.
+// Identity is a numeric fingerprint, not a path (SPEC §3.4's path mechanism is
+// infeasible — Mixxx exposes no `file_path` control). Mixxx sends, on load, the
+// read-only [ChannelN] numerics track_samples / track_samplerate / duration /
+// file_bpm; we match those against `library` rows:
+//
+//   samples ≈ duration * samplerate * channels   (per-deck control vs stored cols)
+//
+// then take the newest detailed (type=1) analysis for that library.id and decode
+// its blob. Read-only + immutable open, safe while Mixxx runs (WAL).
 
 #pragma once
 #include <string>
 
+#include "mixxx_midi.hpp"   // TrackFingerprint
 #include "waveform.hpp"
 
 namespace mxb {
@@ -16,18 +23,22 @@ struct ResolvedTrack {
     int         analysis_id = 0;
     std::string artist;
     std::string title;
+    std::string location;     // for logging/diagnostics only
+    double      bpm = 0.0;    // library.bpm (authoritative; reflects user edits)
     Waveform    waveform;
 };
 
-// Resolve and decode in one call. `mixxx_dir` is the data root (holds
-// mixxxdb.sqlite and analysis/). `path` is the audio file location as Mixxx
-// reports it (track_locations.location). Returns false + err on miss/decode fail.
-bool resolveTrackByPath(const std::string& mixxx_dir, const std::string& path,
-                        ResolvedTrack& out, std::string& err);
+// Resolve + decode in one call. Returns false + err on no match / decode fail.
+bool resolveTrackByFingerprint(const std::string& mixxx_dir,
+                               const TrackFingerprint& fp,
+                               ResolvedTrack& out, std::string& err);
 
-// Lower-level: path -> library.id + newest analysis_id + artist/title, no decode.
-bool lookupAnalysisForPath(const std::string& mixxx_dir, const std::string& path,
-                           int& library_id, int& analysis_id,
-                           std::string& artist, std::string& title, std::string& err);
+// Lower-level: fingerprint -> library.id + analysis_id + artist/title/location.
+bool lookupAnalysisForFingerprint(const std::string& mixxx_dir,
+                                  const TrackFingerprint& fp,
+                                  int& library_id, int& analysis_id,
+                                  std::string& artist, std::string& title,
+                                  std::string& location, double& bpm,
+                                  std::string& err);
 
 }  // namespace mxb
