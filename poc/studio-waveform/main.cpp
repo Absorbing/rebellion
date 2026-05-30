@@ -40,9 +40,9 @@ constexpr int SLICE_MS           = 30;
 // notch emits a burst of +/-1 tick events. Tune how those ticks map to actions,
 // and cap how often we push a (slow, full-frame) redraw so a burst collapses to
 // a couple of frames instead of a multi-second backlog of 261KB pushes.
-constexpr double SCRUB_PER_TICK  = 0.01;  // waveform view shift per knob tick
-constexpr int    SELECT_TICKS    = 4;     // knob ticks needed to step one track
-constexpr int    REDRAW_MIN_MS   = 50;    // cap full-frame pushes to ~20 fps
+constexpr double SCRUB_PER_TICK   = 0.01;  // waveform view shift per knob tick
+constexpr int    SELECT_COOLDOWN_MS = 130; // min gap between track steps (debounce a notch's burst)
+constexpr int    REDRAW_MIN_MS    = 20;    // cap display pushes to ~50 fps
 
 std::string g_serial;
 
@@ -52,7 +52,7 @@ std::string g_mixxxDir;
 int    g_selected = 0;            // index into g_tracks (Knob 2)
 mxb::Waveform g_wf;               // currently loaded waveform
 double g_scroll = 0.0;            // view start as fraction 0..1 (Knob 1)
-int    g_selectAccum = 0;         // unspent Knob 2 ticks (gates track stepping)
+std::chrono::steady_clock::time_point g_lastSelect{};  // last Knob 2 track step
 bool   g_dirty0 = true, g_dirty1 = true;  // which screen needs a redraw
 
 // Colors
@@ -67,8 +67,11 @@ const uint16_t HIC   = mxb::rgb565(255, 90, 108);  // peaks
 
 // ---- device send -----------------------------------------------------------
 void sendFB(int display, const mxb::Framebuffer& fb) {
-    json req = {{"method", "rebellion.sendDataToDisplay"},
-                {"params", json::array({g_serial, display, fb.asIntArray()})},
+    // Send the RLE-compressed device command stream (built in C++) rather than
+    // 130k raw RGB565 ints: the old path JSON-encoded/decoded and rebuilt a
+    // full-frame Lua table every frame, which dominated latency.
+    json req = {{"method", "rebellion.sendDisplayCmd"},
+                {"params", json::array({g_serial, display, fb.encodeDisplayCommands(display)})},
                 {"id", display + 1}};
     const std::string s = req.dump();
     rebellion_rpc(REBELLION_MF_JSON, REBELLION_MT_REQ,
@@ -193,13 +196,15 @@ void scrub(int dir) {
 void selectTrack(int dir) {
     int n = static_cast<int>(g_tracks.size());
     if (n <= 0) return;
-    // Accumulate ticks; only step a track once enough have piled up so a single
-    // notch doesn't skip (or wrap) the short list.
-    g_selectAccum += dir;
-    int steps = g_selectAccum / SELECT_TICKS;
-    if (steps == 0) return;
-    g_selectAccum -= steps * SELECT_TICKS;
-    g_selected = ((g_selected + steps) % n + n) % n;
+    // One physical notch fires a burst of ticks; step on the first and swallow
+    // the rest for a short cooldown so a notch == one track (and a held turn
+    // steps at a steady rate) instead of flying through the short list.
+    auto now = std::chrono::steady_clock::now();
+    auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       now - g_lastSelect).count();
+    if (sinceMs < SELECT_COOLDOWN_MS) return;
+    g_lastSelect = now;
+    g_selected = ((g_selected + dir) % n + n) % n;
     std::fprintf(stderr, "  -> select track #%d\n", g_selected);
     loadSelected();
 }
