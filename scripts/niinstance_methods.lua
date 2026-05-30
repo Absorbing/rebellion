@@ -397,11 +397,14 @@ local function _display_cmd_blit(data)
     tinsert(data, 0x00)
 end
 
-local function _display_cmd_end(data)
-    --end of data
+local function _display_cmd_end(data, display)
+    --end of data (commit). Byte 3 carries the display index: the device's DSD
+    -- setup shows display N's end command is 0x40 0x00 0xNN 0x00. Hardcoding 0x00
+    -- here made every commit target display 0, so display 1 never updated.
+    local _display = display or 0
     tinsert(data, 0x40)
     tinsert(data, 0x00)
-    tinsert(data, 0x00)
+    tinsert(data, _display)
     tinsert(data, 0x00)
 end
 
