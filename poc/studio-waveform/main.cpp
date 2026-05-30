@@ -56,6 +56,7 @@ mxb::Waveform g_wf;               // currently loaded waveform
 double g_scroll = 0.0;            // view start as fraction 0..1 (Knob 1)
 int    g_scrubTicks = 0;         // net Knob 1 ticks awaiting apply (tallied in callback)
 int    g_selTicks   = 0;         // net Knob 2 ticks awaiting apply
+int    g_inputSeq   = 0;         // bumped per knob-rotate event; lets the loop drain until quiet
 int    g_selAccum   = 0;         // running Knob 2 tick balance (steps a track per SELECT_TICKS)
 bool   g_selStepped = false;     // did the current Knob 2 touch already move the selection?
 bool   g_loadPending = false;    // selection moved; waveform decode is owed once nav settles
@@ -245,6 +246,8 @@ void applyInput() {
     // Knob 2: deterministic — accumulate ticks and step one track every
     // SELECT_TICKS. (A short nudge that never reaches the threshold is still
     // honoured as one step when the knob is released; see the BTN_DATA handler.)
+    if (g_selTicks != 0)  // calibration aid: how many ticks a turn actually emits
+        std::fprintf(stderr, "[sel] %+d ticks this cycle\n", g_selTicks);
     g_selAccum += g_selTicks;
     g_selTicks = 0;
     while (g_selAccum >=  SELECT_TICKS) { g_selAccum -= SELECT_TICKS; stepSelection(+1); }
@@ -291,6 +294,7 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
         }
     } else if (ev == "KNOB_ROTATE") {
         // Just tally net ticks (direction string is robust); applyInput() acts.
+        g_inputSeq++;
         std::string knob, direction;
         try { knob = fields.value("knob", ""); direction = fields.value("direction", ""); }
         catch (...) {}
@@ -376,13 +380,20 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "ready: Knob 1 = scrub waveform, Knob 2 = change track. "
                          "Ctrl+C to exit.\n");
 
-    // Main loop: poll device input often (so ticks are captured promptly, not
-    // batched behind a slow op), fold accumulated ticks into state every pass,
-    // and push a frame at most ~50 fps. Input handling stays decoupled from the
-    // (now cheap, RLE) display push, so the UI tracks the knobs in real time.
+    // Main loop. A display push is a blocking round-trip to the device; while
+    // we're in it the device keeps emitting knob ticks into the pipe. If we
+    // pushed once per poll those ticks would back up and keep applying after the
+    // user stops turning ("keeps going"). So each cycle we first DRAIN the event
+    // buffer fully — poll until a poll brings no new rotate events (bounded) —
+    // fold it all in one go, and only then push at most ~50 fps. The device
+    // buffer can't outpace us, so motion stops the instant the knob does.
     auto lastDraw = std::chrono::steady_clock::now();
     for (;;) {
-        rebellion_loop(INPUT_POLL_MS);
+        int guard = 0, seen;
+        do {
+            seen = g_inputSeq;
+            rebellion_loop(INPUT_POLL_MS);
+        } while (g_inputSeq != seen && ++guard < 16);
         applyInput();
         if ((g_dirty0 || g_dirty1) && msSince(lastDraw) >= REDRAW_MIN_MS) {
             redraw();
