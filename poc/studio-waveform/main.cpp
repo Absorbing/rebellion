@@ -40,9 +40,11 @@ constexpr int SLICE_MS           = 30;
 // notch emits a burst of +/-1 tick events. Tune how those ticks map to actions,
 // and cap how often we push a (slow, full-frame) redraw so a burst collapses to
 // a couple of frames instead of a multi-second backlog of 261KB pushes.
-constexpr double SCRUB_PER_TICK   = 0.01;  // waveform view shift per knob tick
-constexpr int    SELECT_COOLDOWN_MS = 130; // min gap between track steps (debounce a notch's burst)
-constexpr int    REDRAW_MIN_MS    = 20;    // cap display pushes to ~50 fps
+constexpr double SCRUB_PER_TICK      = 0.005; // view shift per knob tick (before per-frame cap)
+constexpr double SCRUB_MAX_PER_FRAME = 0.025; // clamp scrub/frame so a tick burst can't jump the view
+constexpr int    SELECT_COOLDOWN_MS  = 130;   // min gap between track steps (one step per notch)
+constexpr int    INPUT_POLL_MS       = 5;     // drain device input this often (stay reactive)
+constexpr int    REDRAW_MIN_MS       = 20;    // cap display pushes to ~50 fps
 
 std::string g_serial;
 
@@ -52,7 +54,10 @@ std::string g_mixxxDir;
 int    g_selected = 0;            // index into g_tracks (Knob 2)
 mxb::Waveform g_wf;               // currently loaded waveform
 double g_scroll = 0.0;            // view start as fraction 0..1 (Knob 1)
+int    g_scrubTicks = 0;         // net Knob 1 ticks awaiting apply (tallied in callback)
+int    g_selTicks   = 0;         // net Knob 2 ticks awaiting apply
 std::chrono::steady_clock::time_point g_lastSelect{};  // last Knob 2 track step
+bool   g_knobTouched[9] = {false};  // 1..8: under-display knob touch (BTN_DATA) state
 bool   g_dirty0 = true, g_dirty1 = true;  // which screen needs a redraw
 
 // Colors
@@ -183,36 +188,44 @@ void redraw() {
 }
 
 // ---- input -----------------------------------------------------------------
-// Knob events arrive as a burst of +/-1 ticks per physical notch; handlers
-// only update state + set dirty flags (the throttled main loop does the slow
-// redraws), so a fast spin can't pile up a backlog of full-frame pushes.
-void scrub(int dir) {
-    g_scroll += dir * SCRUB_PER_TICK;
-    if (g_scroll < 0) g_scroll = 0;
-    if (g_scroll > 1) g_scroll = 1;
-    g_dirty1 = true;
+// The under-display knobs are smooth (detent-less) endless encoders: a turn
+// emits a burst of +/-1 ticks. The callback only TALLIES net ticks (instant,
+// never blocks on I/O); applyInput() folds them into motion once per frame.
+// Because it acts on ticks-per-frame, behaviour tracks how fast you're turning
+// rather than how the pipe batched events, and the per-frame clamp means no
+// burst — however it arrives — can fling the view.
+int msSince(std::chrono::steady_clock::time_point t) {
+    return static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t).count());
 }
 
-void selectTrack(int dir) {
-    int n = static_cast<int>(g_tracks.size());
-    if (n <= 0) return;
-    // One physical notch fires a burst of ticks; step on the first and swallow
-    // the rest for a short cooldown so a notch == one track (and a held turn
-    // steps at a steady rate) instead of flying through the short list.
-    auto now = std::chrono::steady_clock::now();
-    auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       now - g_lastSelect).count();
-    if (sinceMs < SELECT_COOLDOWN_MS) return;
-    g_lastSelect = now;
-    g_selected = ((g_selected + dir) % n + n) % n;
-    std::fprintf(stderr, "  -> select track #%d\n", g_selected);
-    loadSelected();
-}
+void applyInput() {
+    // Knob 1: scrub, proportional to ticks this frame but clamped.
+    int s = g_scrubTicks;
+    g_scrubTicks = 0;
+    if (s != 0) {
+        double delta = s * SCRUB_PER_TICK;
+        if (delta >  SCRUB_MAX_PER_FRAME) delta =  SCRUB_MAX_PER_FRAME;
+        if (delta < -SCRUB_MAX_PER_FRAME) delta = -SCRUB_MAX_PER_FRAME;
+        g_scroll += delta;
+        if (g_scroll < 0) g_scroll = 0;
+        if (g_scroll > 1) g_scroll = 1;
+        g_dirty1 = true;
+    }
 
-// Knob index comes as "KNOB1".."KNOB8"; direction string gives the sign.
-void onKnob(const std::string& knob, int dir) {
-    if (knob == "KNOB1")      scrub(dir);
-    else if (knob == "KNOB2") selectTrack(dir);
+    // Knob 2: one track step per notch — act on the first tick, then swallow the
+    // rest of the burst for a cooldown (a held turn steps at a steady rate).
+    if (g_selTicks != 0 && msSince(g_lastSelect) >= SELECT_COOLDOWN_MS) {
+        int dir = (g_selTicks > 0) ? 1 : -1;
+        g_selTicks = 0;
+        g_lastSelect = std::chrono::steady_clock::now();
+        int n = static_cast<int>(g_tracks.size());
+        if (n > 0) {
+            g_selected = ((g_selected + dir) % n + n) % n;
+            std::fprintf(stderr, "  -> select track #%d\n", g_selected);
+            loadSelected();
+        }
+    }
 }
 
 int rpc_callback(rebellion_message_format mf, rebellion_message_type,
@@ -252,16 +265,33 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
             std::fprintf(stderr, "device ON, serial=%s\n", g_serial.c_str());
         }
     } else if (ev == "KNOB_ROTATE") {
-        // Use the direction STRING (robust; avoids parsing the numeric field).
+        // Just tally net ticks (direction string is robust); applyInput() acts.
         std::string knob, direction;
         try { knob = fields.value("knob", ""); direction = fields.value("direction", ""); }
         catch (...) {}
         int dir = (direction == "CLOCKWISE") ? 1 : -1;
-        std::fprintf(stderr, "[event] KNOB_ROTATE knob=%s dir=%s\n",
-                     knob.c_str(), direction.c_str());
-        if (!knob.empty()) onKnob(knob, dir);
+        if (knob == "KNOB1")      g_scrubTicks += dir;
+        else if (knob == "KNOB2") g_selTicks   += dir;
+    } else if (ev == "BTN_DATA") {
+        // The under-display knobs are touch-sensitive: a touch arrives as
+        // KNOB1..8 PRESSED, lift as RELEASED. Use a fresh touch to clear any
+        // stale ticks so motion always starts from a clean slate.
+        std::string btn, state;
+        try { btn = fields.value("button", ""); state = fields.value("state", ""); }
+        catch (...) {}
+        if (btn.size() == 5 && btn.compare(0, 4, "KNOB") == 0) {
+            int k = btn[4] - '0';
+            if (k >= 1 && k <= 8) {
+                bool pressed = (state == "PRESSED");
+                g_knobTouched[k] = pressed;
+                if (pressed) {
+                    if (k == 1) g_scrubTicks = 0;
+                    if (k == 2) { g_selTicks = 0; g_lastSelect = {}; }
+                }
+            }
+        }
     } else if (!ev.empty() && ev != "PAD_DATA") {
-        // Surface anything else (BTN_DATA, the 4-D jog, etc.) so we can see it.
+        // Surface anything else (the 4-D jog, etc.) so we can see it.
         std::fprintf(stderr, "[event] %s %s\n", ev.c_str(), fields.dump().c_str());
     }
     return 0;
@@ -309,20 +339,17 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "ready: Knob 1 = scrub waveform, Knob 2 = change track. "
                          "Ctrl+C to exit.\n");
 
-    // Main loop: pump events (knobs just set dirty flags), then redraw at most
-    // ~20 fps. Decoupling input from the slow 261KB push means a fast knob spin
-    // updates state many times but only emits a few frames, always the latest —
-    // no multi-second backlog of stale frames draining after you stop turning.
+    // Main loop: poll device input often (so ticks are captured promptly, not
+    // batched behind a slow op), fold accumulated ticks into state every pass,
+    // and push a frame at most ~50 fps. Input handling stays decoupled from the
+    // (now cheap, RLE) display push, so the UI tracks the knobs in real time.
     auto lastDraw = std::chrono::steady_clock::now();
     for (;;) {
-        rebellion_loop(SLICE_MS);
-        if (!(g_dirty0 || g_dirty1)) continue;
-        auto now = std::chrono::steady_clock::now();
-        auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           now - lastDraw).count();
-        if (sinceMs >= REDRAW_MIN_MS) {
+        rebellion_loop(INPUT_POLL_MS);
+        applyInput();
+        if ((g_dirty0 || g_dirty1) && msSince(lastDraw) >= REDRAW_MIN_MS) {
             redraw();
-            lastDraw = now;
+            lastDraw = std::chrono::steady_clock::now();
         }
     }
     return 0;  // unreachable; Ctrl+C exits
