@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -45,6 +46,7 @@ constexpr int    SELECT_TICKS        = 10;    // Knob 2 ticks per track step on 
 constexpr int    SELECT_SETTLE_MS    = 120;   // decode the waveform only after nav settles this long
 constexpr int    INPUT_POLL_MS       = 3;     // pump the state machine this often (stay reactive)
 constexpr int    REDRAW_MIN_MS       = 20;    // cap display pushes to ~50 fps
+constexpr int    BOOT_HOLD_MS        = 1400;  // keep the boot splash up at least this long
 
 std::string g_serial;
 
@@ -183,6 +185,48 @@ void renderWaveform(mxb::Framebuffer& fb) {
     int barX = static_cast<int>(g_scroll * (mxb::kW - barW));
     fb.fillRect(0, mxb::kH - 6, mxb::kW, 6, PANEL);
     fb.fillRect(barX, mxb::kH - 6, barW, 6, CYAN);
+}
+
+// Center a line of 5x7 text horizontally at row y.
+void centerText(mxb::Framebuffer& fb, int y, const std::string& s, uint16_t c, int scale) {
+    int w = static_cast<int>(s.size()) * 6 * scale;
+    fb.text((mxb::kW - w) / 2, y, s, c, scale);
+}
+
+// Boot splash, drawn with the framebuffer primitives (no asset files needed).
+// display 0 = wordmark, display 1 = a waveform-motif teaser.
+void renderSplash(mxb::Framebuffer& fb, int display) {
+    fb.clear(BG);
+    fb.fillRect(0, 0, mxb::kW, 3, CYAN);
+    fb.fillRect(0, mxb::kH - 3, mxb::kW, 3, CYAN);
+
+    if (display == 0) {
+        centerText(fb, 78, "MIXXX BRIDGE", CYAN, 4);
+        centerText(fb, 120, "for NI Maschine Studio", DIM, 1);
+        fb.fillRect(150, 142, mxb::kW - 300, 2, PANEL);
+        centerText(fb, 162, "scrub  -  browse  -  waveform", DIM, 1);
+        centerText(fb, mxb::kH - 30, "starting up...", MIDC, 1);
+    } else {
+        // Symmetric waveform envelope across the panel, tapered at the edges.
+        const int mid = mxb::kH / 2;
+        const int maxH = mxb::kH / 2 - 24;
+        for (int x = 0; x < mxb::kW; ++x) {
+            double t = x / static_cast<double>(mxb::kW);
+            double wave = 0.55 + 0.45 * std::sin(t * 6.2831853 * 3.0);
+            double taper = std::sin(t * 3.1415927);   // 0 at edges, 1 in middle
+            int h = static_cast<int>(wave * taper * maxH);
+            uint16_t c = h > maxH * 2 / 3 ? HIC : (h > maxH / 3 ? MIDC : LOWC);
+            fb.vline(x, mid - h, mid + h, c);
+        }
+        // Dark strip behind the title so it stays legible over the art.
+        fb.fillRect(0, mid - 16, mxb::kW, 32, BG);
+        centerText(fb, mid - 7, "STUDIO BRIDGE", WHITE, 2);
+    }
+}
+
+void showSplash() {
+    mxb::Framebuffer fb0; renderSplash(fb0, 0); sendFB(0, fb0);
+    mxb::Framebuffer fb1; renderSplash(fb1, 1); sendFB(1, fb1);
 }
 
 void redraw() {
@@ -372,7 +416,13 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "warming up instance...\n");
     pump(INSTANCE_WARMUP_MS);
 
+    // Boot splash, then hold it while the first track decodes so it's actually
+    // seen before the live UI paints in.
+    showSplash();
+    auto bootAt = std::chrono::steady_clock::now();
+
     loadSelected();   // decode the first track
+    while (msSince(bootAt) < BOOT_HOLD_MS) rebellion_loop(INPUT_POLL_MS);
     redraw();         // initial paint of both screens
 
     std::fprintf(stderr, "ready: Knob 1 = scrub waveform, Knob 2 = change track. "
