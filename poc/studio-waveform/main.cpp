@@ -42,6 +42,7 @@ constexpr int SLICE_MS           = 30;
 constexpr double SCRUB_PER_TICK      = 0.005; // view shift per knob tick (before per-frame cap)
 constexpr double SCRUB_MAX_PER_FRAME = 0.025; // clamp scrub/frame so a tick burst can't jump the view
 constexpr int    SELECT_TICKS        = 10;    // Knob 2 ticks per track step on a *held* turn
+constexpr int    SELECT_SETTLE_MS    = 120;   // decode the waveform only after nav settles this long
 constexpr int    INPUT_POLL_MS       = 5;     // drain device input this often (stay reactive)
 constexpr int    REDRAW_MIN_MS       = 20;    // cap display pushes to ~50 fps
 
@@ -57,6 +58,8 @@ int    g_scrubTicks = 0;         // net Knob 1 ticks awaiting apply (tallied in 
 int    g_selTicks   = 0;         // net Knob 2 ticks awaiting apply
 int    g_selAccum   = 0;         // running Knob 2 tick balance (steps a track per SELECT_TICKS)
 bool   g_selStepped = false;     // did the current Knob 2 touch already move the selection?
+bool   g_loadPending = false;    // selection moved; waveform decode is owed once nav settles
+std::chrono::steady_clock::time_point g_lastSelChange{};  // when the highlight last moved
 bool   g_knobTouched[9] = {false};  // 1..8: under-display knob touch (BTN_DATA) state
 bool   g_dirty0 = true, g_dirty1 = true;  // which screen needs a redraw
 
@@ -199,13 +202,30 @@ int msSince(std::chrono::steady_clock::time_point t) {
         std::chrono::steady_clock::now() - t).count());
 }
 
+// Move the highlight only — cheap, so list nav stays instant. The expensive
+// waveform decode is deferred (g_loadPending) until the selection settles, so a
+// flurry of steps can't queue a decode-per-step and march on after you stop.
 void stepSelection(int dir) {
     int n = static_cast<int>(g_tracks.size());
     if (n <= 0) return;
     g_selected = ((g_selected + dir) % n + n) % n;
     g_selStepped = true;
+    g_loadPending = true;
+    g_lastSelChange = std::chrono::steady_clock::now();
+    g_dirty0 = true;                 // refresh the list highlight now
     std::fprintf(stderr, "  -> select track #%d\n", g_selected);
-    loadSelected();
+}
+
+// Decode the highlighted track's waveform once nav has settled (a brief pause
+// with no further steps) — never mid-flurry, so a fast scroll never blocks. The
+// timer alone covers both touched and untouched turns; the highlight has already
+// moved instantly, the waveform just fills in a moment after you stop.
+void maybeLoadSelection() {
+    if (!g_loadPending) return;
+    if (msSince(g_lastSelChange) >= SELECT_SETTLE_MS) {
+        g_loadPending = false;
+        loadSelected();              // sets g_dirty1 (waveform) when done
+    }
 }
 
 void applyInput() {
@@ -229,6 +249,8 @@ void applyInput() {
     g_selTicks = 0;
     while (g_selAccum >=  SELECT_TICKS) { g_selAccum -= SELECT_TICKS; stepSelection(+1); }
     while (g_selAccum <= -SELECT_TICKS) { g_selAccum += SELECT_TICKS; stepSelection(-1); }
+
+    maybeLoadSelection();
 }
 
 int rpc_callback(rebellion_message_format mf, rebellion_message_type,
