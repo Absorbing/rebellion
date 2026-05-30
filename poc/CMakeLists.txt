@@ -70,3 +70,46 @@ target_include_directories(studio_waveform PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/studio-waveform
 )
 target_link_libraries(studio_waveform PRIVATE mxb_decode librebellion)
+
+# --- Stage 3: Mixxx bridge input layer (loopMIDI -> decode -> deck state) -------
+# Pure decode/resolve/model core (no device, no Lua) + a thin RtMidi listener.
+# RtMidi is optional: when present the listener can open a loopMIDI port; without
+# it, the library still builds and the decode core + tests run anywhere.
+option(REBELLION_POC_RTMIDI "Build the Mixxx-bridge loopMIDI listener via RtMidi" ON)
+
+add_library(mxb_mixxx_bridge STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/mixxx_midi.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/deck_state.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/track_resolver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/mixxx_listener.cpp
+)
+target_include_directories(mxb_mixxx_bridge PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge
+)
+target_link_libraries(mxb_mixxx_bridge PUBLIC mxb_decode)
+
+if(REBELLION_POC_RTMIDI)
+    # Vendored under poc/third_party/rtmidi if present, else fetched.
+    set(RTMIDI_SRCDIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rtmidi")
+    if(EXISTS "${RTMIDI_SRCDIR}/CMakeLists.txt")
+        FetchContent_Declare(rtmidi_dep SOURCE_DIR "${RTMIDI_SRCDIR}")
+    else()
+        FetchContent_Declare(rtmidi_dep
+            GIT_REPOSITORY https://github.com/thestk/rtmidi.git
+            GIT_TAG        6.0.0
+        )
+    endif()
+    set(RTMIDI_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(rtmidi_dep)
+    target_link_libraries(mxb_mixxx_bridge PUBLIC rtmidi)
+    target_compile_definitions(mxb_mixxx_bridge PUBLIC MXB_HAVE_RTMIDI=1)
+endif()
+
+# Off-device unit tests for the decode core (SysEx 7-bit unpack, MIDI tables,
+# deck model). Runs anywhere; registered with CTest.
+add_executable(mxb_bridge_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/test_mixxx_midi.cpp
+)
+target_link_libraries(mxb_bridge_tests PRIVATE mxb_mixxx_bridge)
+enable_testing()
+add_test(NAME mxb_bridge_tests COMMAND mxb_bridge_tests)
