@@ -89,20 +89,25 @@ target_include_directories(mxb_mixxx_bridge PUBLIC
 target_link_libraries(mxb_mixxx_bridge PUBLIC mxb_decode)
 
 if(REBELLION_POC_RTMIDI)
-    # Vendored under poc/third_party/rtmidi if present, else fetched.
-    set(RTMIDI_SRCDIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rtmidi")
-    if(EXISTS "${RTMIDI_SRCDIR}/CMakeLists.txt")
-        FetchContent_Declare(rtmidi_dep SOURCE_DIR "${RTMIDI_SRCDIR}")
-    else()
-        FetchContent_Declare(rtmidi_dep
-            GIT_REPOSITORY https://github.com/thestk/rtmidi.git
-            GIT_TAG        6.0.0
-        )
-    endif()
-    set(RTMIDI_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(rtmidi_dep)
-    target_link_libraries(mxb_mixxx_bridge PUBLIC rtmidi)
+    # RtMidi is vendored as a single .cpp + header (poc/third_party/rtmidi) and
+    # compiled straight in — no FetchContent (no configure-time network) and no
+    # extra DLL beside the exe. Pick the platform backend + system MIDI lib.
+    set(RTMIDI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rtmidi")
+    target_sources(mxb_mixxx_bridge PRIVATE ${RTMIDI_DIR}/RtMidi.cpp)
+    target_include_directories(mxb_mixxx_bridge PUBLIC ${RTMIDI_DIR})
     target_compile_definitions(mxb_mixxx_bridge PUBLIC MXB_HAVE_RTMIDI=1)
+    if(WIN32)
+        target_compile_definitions(mxb_mixxx_bridge PRIVATE __WINDOWS_MM__=1)
+        target_link_libraries(mxb_mixxx_bridge PUBLIC winmm)
+    elseif(APPLE)
+        target_compile_definitions(mxb_mixxx_bridge PRIVATE __MACOSX_CORE__=1)
+        target_link_libraries(mxb_mixxx_bridge PUBLIC "-framework CoreMIDI"
+                              "-framework CoreAudio" "-framework CoreFoundation")
+    else()
+        target_compile_definitions(mxb_mixxx_bridge PRIVATE __LINUX_ALSA__=1)
+        find_package(Threads REQUIRED)
+        target_link_libraries(mxb_mixxx_bridge PUBLIC asound Threads::Threads)
+    endif()
 endif()
 
 # Off-device unit tests for the decode core (SysEx 7-bit unpack, MIDI tables,

@@ -4,5 +4,7 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# PoC fetched/vendored deps
+# PoC fetched deps (build output), but keep checked-in vendored sources
 poc/third_party/
+!poc/third_party/rtmidi/
+!poc/third_party/rtmidi/**
