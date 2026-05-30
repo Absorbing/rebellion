@@ -117,7 +117,10 @@ void printParsed(const std::string& ts, const std::string& ev, const json& d) {
         line << ev << "   raw=" << d.dump();
     }
     std::cout << line.str();
-    if (g_raw && !d.empty()) std::cout << "    | " << d.dump();
+    // Always surface the raw data object too: the friendly fields above are
+    // best-effort and the exact key names vary per event, but this guarantees
+    // the actual values (ids, velocity, pressure) are never hidden.
+    if (!d.empty()) std::cout << "    data=" << d.dump();
     std::cout << '\n';
 }
 
