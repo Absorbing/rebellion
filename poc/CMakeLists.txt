@@ -58,3 +58,15 @@ target_link_libraries(mxb_decode PUBLIC zlibstatic mxb_sqlite3)
 
 add_executable(waveform_decode ${CMAKE_CURRENT_SOURCE_DIR}/decode/main.cpp)
 target_link_libraries(waveform_decode PRIVATE mxb_decode)
+
+# --- Stage 2: studio_waveform (links librebellion: drives screens + knobs) -----
+get_target_property(nlohmann-json_SOURCE_DIR nlohmann-json SOURCE_DIR)
+add_executable(studio_waveform
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-waveform/main.cpp
+)
+target_include_directories(studio_waveform PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${nlohmann-json_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-waveform
+)
+target_link_libraries(studio_waveform PRIVATE mxb_decode librebellion)
