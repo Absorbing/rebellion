@@ -109,6 +109,12 @@ Fixes required to build/run on Windows (all on the branch):
 **Rationale:** Acquire, full control/LED I/O, and BOTH displays all confirmed
 working on real hardware. Highest risk (display protocol) resolved best-case.
 
+**SPEC correction — Mixxx data dir location:**
+The real install puts the data dir under **`%LOCALAPPDATA%\Mixxx`**
+(`C:\Users\<user>\AppData\Local\Mixxx`), NOT `%APPDATA%\Mixxx` (Roaming) as the
+SPEC §3.1, §11.1 (`config.toml` `mixxx_data`), and §12 install steps assume.
+v0.1 default path + docs must use Local (with Roaming as a fallback).
+
 **Carry-forward tasks for v0.1:**
 1. Implement `PARSE_KNOB_ROTATE_4D_EVENT` for the jog wheel (rotate/touch/push).
 2. Full control-surface mapping enumeration (SPEC §1.1) using nihia_monitor —

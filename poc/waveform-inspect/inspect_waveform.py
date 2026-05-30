@@ -101,12 +101,61 @@ def describe_len_field(chunk):
             f"first8={list(chunk[:8])}")
 
 
+def summarize_submessage(chunk):
+    """Parse a length-delimited chunk AS a sub-message and summarise its fields:
+    for each tag, count occurrences and (for varints) value range. This reveals
+    the Signal layout: is the sample array repeated-int32 at some field, plus
+    any channels/units metadata fields?"""
+    pos, n = 0, len(chunk)
+    counts = {}        # (field_no, wire) -> count
+    vrange = {}        # field_no -> [min,max] for varint fields
+    submsgs = []       # (field_no, length) for nested length fields
+    while pos < n:
+        try:
+            key, pos = read_varint(chunk, pos)
+        except IndexError:
+            break
+        field_no, wire = key >> 3, key & 0x07
+        counts[(field_no, wire)] = counts.get((field_no, wire), 0) + 1
+        if wire == 0:
+            val, pos = read_varint(chunk, pos)
+            r = vrange.setdefault(field_no, [val, val])
+            r[0], r[1] = min(r[0], val), max(r[1], val)
+        elif wire == 1:
+            pos += 8
+        elif wire == 2:
+            ln, pos = read_varint(chunk, pos)
+            if len(submsgs) < 8:
+                submsgs.append((field_no, ln))
+            pos += ln
+        elif wire == 5:
+            pos += 4
+        else:
+            return f"(stopped: unknown wire {wire} at {pos})"
+    lines = []
+    for (fno, wire), cnt in sorted(counts.items()):
+        wt = WIRE_TYPES.get(wire, f"wire{wire}")
+        extra = ""
+        if fno in vrange:
+            extra = f" range={vrange[fno][0]}..{vrange[fno][1]}"
+        lines.append(f"field #{fno} [{wt}] x{cnt}{extra}")
+    out = "; ".join(lines)
+    if submsgs:
+        out += "  | nested len-fields: " + ", ".join(
+            f"#{f}(len {l})" for f, l in submsgs)
+    return out
+
+
 # ---- Mixxx data access ------------------------------------------------------
 
 def default_mixxx_dir():
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        return os.path.join(appdata, "Mixxx")
+    # NOTE: real installs put the data dir under %LOCALAPPDATA%\Mixxx
+    # (C:\Users\<user>\AppData\Local\Mixxx), NOT %APPDATA%\Mixxx (Roaming) as the
+    # SPEC §3.1/§11.1/§12 currently assume. Check Local first, then Roaming.
+    for env in ("LOCALAPPDATA", "APPDATA"):
+        base = os.environ.get(env)
+        if base and os.path.isdir(os.path.join(base, "Mixxx")):
+            return os.path.join(base, "Mixxx")
     # macOS / Linux fallbacks (handy for inspecting a copied dir)
     home = os.path.expanduser("~")
     for cand in (os.path.join(home, "Library", "Containers",
@@ -115,7 +164,9 @@ def default_mixxx_dir():
                  os.path.join(home, ".mixxx")):
         if os.path.isdir(cand):
             return cand
-    return os.path.join(home, "Mixxx")
+    # last-resort guess
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or home
+    return os.path.join(base, "Mixxx")
 
 
 def main():
@@ -195,6 +246,29 @@ def main():
     fields = scan_protobuf(payload)
     for field_no, wire, summary in fields:
         print(f"    field #{field_no:<2} [{wire:<10}] {summary}")
+
+    # Recurse one level into the length-delimited fields (signal_all /
+    # signal_filtered) so the C++ extractor knows their internal layout.
+    print()
+    print("=== Sub-message layout of length-delimited fields ===")
+    pos, n = 0, len(payload)
+    while pos < n:
+        key, pos = read_varint(payload, pos)
+        field_no, wire = key >> 3, key & 0x07
+        if wire == 0:
+            _, pos = read_varint(payload, pos)
+        elif wire == 1:
+            pos += 8
+        elif wire == 5:
+            pos += 4
+        elif wire == 2:
+            ln, pos = read_varint(payload, pos)
+            chunk = payload[pos:pos + ln]
+            pos += ln
+            print(f"    field #{field_no} (len {ln}):")
+            print(f"        {summarize_submessage(chunk)}")
+        else:
+            break
 
     print()
     print("=== Interpretation hint (map against SPEC §3.2) ===")
