@@ -43,7 +43,7 @@ constexpr double SCRUB_PER_TICK      = 0.005; // view shift per knob tick (befor
 constexpr double SCRUB_MAX_PER_FRAME = 0.025; // clamp scrub/frame so a tick burst can't jump the view
 constexpr int    SELECT_TICKS        = 10;    // Knob 2 ticks per track step on a *held* turn
 constexpr int    SELECT_SETTLE_MS    = 120;   // decode the waveform only after nav settles this long
-constexpr int    INPUT_POLL_MS       = 5;     // drain device input this often (stay reactive)
+constexpr int    INPUT_POLL_MS       = 3;     // pump the state machine this often (stay reactive)
 constexpr int    REDRAW_MIN_MS       = 20;    // cap display pushes to ~50 fps
 
 std::string g_serial;
@@ -56,7 +56,6 @@ mxb::Waveform g_wf;               // currently loaded waveform
 double g_scroll = 0.0;            // view start as fraction 0..1 (Knob 1)
 int    g_scrubTicks = 0;         // net Knob 1 ticks awaiting apply (tallied in callback)
 int    g_selTicks   = 0;         // net Knob 2 ticks awaiting apply
-int    g_inputSeq   = 0;         // bumped per knob-rotate event; lets the loop drain until quiet
 int    g_selAccum   = 0;         // running Knob 2 tick balance (steps a track per SELECT_TICKS)
 bool   g_selStepped = false;     // did the current Knob 2 touch already move the selection?
 bool   g_loadPending = false;    // selection moved; waveform decode is owed once nav settles
@@ -294,7 +293,6 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
         }
     } else if (ev == "KNOB_ROTATE") {
         // Just tally net ticks (direction string is robust); applyInput() acts.
-        g_inputSeq++;
         std::string knob, direction;
         try { knob = fields.value("knob", ""); direction = fields.value("direction", ""); }
         catch (...) {}
@@ -380,20 +378,14 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "ready: Knob 1 = scrub waveform, Knob 2 = change track. "
                          "Ctrl+C to exit.\n");
 
-    // Main loop. A display push is a blocking round-trip to the device; while
-    // we're in it the device keeps emitting knob ticks into the pipe. If we
-    // pushed once per poll those ticks would back up and keep applying after the
-    // user stops turning ("keeps going"). So each cycle we first DRAIN the event
-    // buffer fully — poll until a poll brings no new rotate events (bounded) —
-    // fold it all in one go, and only then push at most ~50 fps. The device
-    // buffer can't outpace us, so motion stops the instant the knob does.
+    // Main loop. onLOOP (Lua) now drains the notification pipe fully each pass,
+    // so one cycle catches up on a whole knob burst — no backlog survives to
+    // replay after the knob stops. We just pump quickly, fold the batch, and
+    // push at most ~50 fps. The display push blocks the notif port only for its
+    // own duration; whatever buffers during it is drained on the very next pass.
     auto lastDraw = std::chrono::steady_clock::now();
     for (;;) {
-        int guard = 0, seen;
-        do {
-            seen = g_inputSeq;
-            rebellion_loop(INPUT_POLL_MS);
-        } while (g_inputSeq != seen && ++guard < 16);
+        rebellion_loop(INPUT_POLL_MS);
         applyInput();
         if ((g_dirty0 || g_dirty1) && msSince(lastDraw) >= REDRAW_MIN_MS) {
             redraw();

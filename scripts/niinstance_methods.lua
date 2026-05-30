@@ -308,10 +308,16 @@ end
 
 function _M:onLOOP(...)
     local notifport = self:getNotifPort()
-    notifport:loop(0.005)
-    --assert(self:switchState("halt", "no error"))
-    --log.debug(self:getDevice():getName() .. ":" .. self:getSerial() .. " loop")
-    --App.sleep(0.1)
+    -- The platform pipe loop advances only ONE notification message per call, so
+    -- a fast knob spin buffers a deep queue in the OS pipe that used to drain
+    -- one-message-per-cycle and replay long after the knob stopped. Drain it
+    -- aggressively here: one short blocking poll for idle responsiveness, then a
+    -- burst of non-blocking polls that flush everything already buffered.
+    -- loop(0) is a cheap no-op when nothing is ready, so idle cost stays low.
+    notifport:loop(0.003)
+    for _ = 1, 48 do
+        notifport:loop(0)
+    end
 end
 
 function _M:onERROR(...)
