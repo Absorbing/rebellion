@@ -38,6 +38,8 @@ extern "C" {
 #include "mixxx_midi.hpp"
 #include "mixxx_listener.hpp"
 #include "track_resolver.hpp"
+#include "control_map.hpp"
+#include "midi_out.hpp"
 
 namespace {
 
@@ -49,6 +51,18 @@ constexpr int REDRAW_MIN_MS      = 33;   // ~30fps cap; overview frames are heav
 
 std::string g_serial;
 std::string g_mixxxDir;
+
+// Outbound: Studio buttons/pads/knobs -> MIDI -> Mixxx (2nd loopMIDI port).
+// Driven from rpc_callback, which runs on the main thread during rebellion_loop,
+// so direct sends are safe (no cross-thread concern like the inbound listener).
+mxb::MidiOut g_out;
+
+int knobNameToIndex(const std::string& name) {  // "KNOB1".."KNOB8" -> 1..8, else 0
+    if (name.size() == 5 && name.compare(0, 4, "KNOB") == 0 &&
+        name[4] >= '1' && name[4] <= '8')
+        return name[4] - '0';
+    return 0;
+}
 
 // Which Mixxx deck each display shows. Display 0 = Deck A, display 1 = Deck B.
 constexpr int kDeckForDisplay[2] = {1, 2};
@@ -104,6 +118,26 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
             } catch (...) {}
             std::fprintf(stderr, "device ON, serial=%s\n", g_serial.c_str());
         }
+        return 0;
+    }
+
+    // --- Studio controls -> outbound MIDI (forward to Mixxx) -----------------
+    if (ev == "BTN_DATA") {
+        int id = fields.value("buttonid", -1);
+        std::string state = fields.value("state", "");
+        if (id >= 0 && (state == "PRESSED" || state == "RELEASED"))
+            g_out.send(mxb::mapButton(id, state == "PRESSED"));
+    } else if (ev == "PAD_DATA") {
+        int pad = fields.value("padid", -1);
+        std::string state = fields.value("state", "");
+        int cp = fields.value("cpressure", 0);
+        if (pad >= 1 && (state == "PRESSED" || state == "RELEASED"))
+            g_out.send(mxb::mapPad(pad, state == "PRESSED", cp));
+    } else if (ev == "KNOB_ROTATE") {
+        int k = knobNameToIndex(fields.value("knob", ""));
+        std::string dir = fields.value("direction", "");
+        if (k >= 1 && !dir.empty())
+            g_out.send(mxb::mapKnobRotate(k, dir == "CLOCKWISE"));
     }
     return 0;
 }
@@ -133,8 +167,9 @@ void renderSplash(mxb::Framebuffer& fb, int deckNum) {
 int main(int argc, char** argv) {
     g_mixxxDir = (argc > 1) ? argv[1] : defaultMixxxDir();
     const std::string midiPort = (argc > 2) ? argv[2] : "Mixxx-State";
-    std::fprintf(stderr, "studio_bridge: Mixxx dir = %s, MIDI port = \"%s\"\n",
-                 g_mixxxDir.c_str(), midiPort.c_str());
+    const std::string outPort  = (argc > 3) ? argv[3] : "Studio-Control";
+    std::fprintf(stderr, "studio_bridge: Mixxx dir = %s, in = \"%s\", out = \"%s\"\n",
+                 g_mixxxDir.c_str(), midiPort.c_str(), outPort.c_str());
 
     // Deck model: on a track-identity event, match the fingerprint to a library
     // row and decode its waveform from mixxxdb.sqlite + analysis/.
@@ -172,6 +207,19 @@ int main(int argc, char** argv) {
         for (const auto& p : mxb::MixxxListener::listInputPorts())
             std::fprintf(stderr, "  - %s\n", p.c_str());
         std::fprintf(stderr, "(continuing; screens will show 'waiting for Mixxx')\n");
+    }
+
+    // Outbound port (Studio controls -> Mixxx). Optional: bridge still drives
+    // the screens if it's missing, just won't forward buttons.
+    std::string oerr;
+    if (!g_out.open(outPort, oerr)) {
+        std::fprintf(stderr, "MIDI out: %s\n", oerr.c_str());
+        std::fprintf(stderr, "available output ports:\n");
+        for (const auto& p : mxb::MidiOut::listOutputPorts())
+            std::fprintf(stderr, "  - %s\n", p.c_str());
+        std::fprintf(stderr, "(continuing; Studio buttons won't reach Mixxx)\n");
+    } else {
+        std::fprintf(stderr, "forwarding Studio controls -> \"%s\"\n", outPort.c_str());
     }
 
     rebellion(rpc_callback);

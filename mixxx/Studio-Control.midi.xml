@@ -1,0 +1,66 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!--
+  Mixxx Studio Bridge — control input (Studio buttons/pads/knobs -> Mixxx).
+
+  The bridge forwards every Studio control to this (second) virtual port as a
+  stable MIDI message; Mixxx maps them to actions here. This is a STARTER set for
+  a 2-deck layout — extend it, or use Mixxx's MIDI-learn wizard (Preferences ->
+  Controllers -> Learning Wizard) to bind any Studio control by pressing it.
+
+  Wire scheme (from control_map.hpp):
+    Buttons : 90 <buttonid> vel        (ch1)   GROUP_A=16 B=19 C=20 D=23, PLAY=29,
+                                                REC=30, SHIFT=26, ERASE=25, ...
+    Pads    : 91 <padid 1..16> vel      (ch2)
+    Knobs   : B0 <0x30+(knob-1)> rel    (ch1)   relative (41=CW, 3F=CCW)
+
+  SETUP: create a 2nd loopMIDI port "Studio-Control"; copy this file to
+  %LOCALAPPDATA%\Mixxx\controllers\ ; enable it on that port in Mixxx.
+  The bridge sends to it via:  studio_bridge.exe <dir> "Mixxx-State" "Studio-Control"
+-->
+<MixxxControllerPreset mixxxVersion="2.4.0" schemaVersion="1">
+  <info>
+    <name>Mixxx Studio Bridge (control)</name>
+    <author>Mixxx Studio Bridge</author>
+    <description>Maps forwarded Maschine Studio controls to Mixxx actions. Starter 2-deck set; extend or MIDI-learn.</description>
+  </info>
+  <controller id="MixxxStudioBridgeControl">
+    <controls>
+      <!-- GROUP A / B = Deck 1 / Deck 2 play-pause (note 16 / 19 on ch1). -->
+      <control><group>[Channel1]</group><key>play</key>
+        <status>0x90</status><midino>0x10</midino><options><normal/></options></control>
+      <control><group>[Channel2]</group><key>play</key>
+        <status>0x90</status><midino>0x13</midino><options><normal/></options></control>
+
+      <!-- GROUP C / D = Deck 1 / Deck 2 cue (note 20 / 23). -->
+      <control><group>[Channel1]</group><key>cue_default</key>
+        <status>0x90</status><midino>0x14</midino><options><normal/></options></control>
+      <control><group>[Channel2]</group><key>cue_default</key>
+        <status>0x90</status><midino>0x17</midino><options><normal/></options></control>
+
+      <!-- Pads 1-8 (ch2) = Deck 1 hotcues 1-8 activate. -->
+      <control><group>[Channel1]</group><key>hotcue_1_activate</key>
+        <status>0x91</status><midino>0x01</midino><options><normal/></options></control>
+      <control><group>[Channel1]</group><key>hotcue_2_activate</key>
+        <status>0x91</status><midino>0x02</midino><options><normal/></options></control>
+      <control><group>[Channel1]</group><key>hotcue_3_activate</key>
+        <status>0x91</status><midino>0x03</midino><options><normal/></options></control>
+      <control><group>[Channel1]</group><key>hotcue_4_activate</key>
+        <status>0x91</status><midino>0x04</midino><options><normal/></options></control>
+      <control><group>[Channel1]</group><key>hotcue_5_activate</key>
+        <status>0x91</status><midino>0x05</midino><options><normal/></options></control>
+      <control><group>[Channel1]</group><key>hotcue_6_activate</key>
+        <status>0x91</status><midino>0x06</midino><options><normal/></options></control>
+      <control><group>[Channel1]</group><key>hotcue_7_activate</key>
+        <status>0x91</status><midino>0x07</midino><options><normal/></options></control>
+      <control><group>[Channel1]</group><key>hotcue_8_activate</key>
+        <status>0x91</status><midino>0x08</midino><options><normal/></options></control>
+
+      <!-- Knob 1 (ch1 CC 0x30, relative) = Deck 1 jog/scratch nudge. -->
+      <control><group>[Channel1]</group><key>jog</key>
+        <status>0xB0</status><midino>0x30</midino><options><selectknob/></options></control>
+    </controls>
+    <outputs>
+      <!-- LED feedback is driven by the bridge over NIHIA (sendLedData), not here. -->
+    </outputs>
+  </controller>
+</MixxxControllerPreset>

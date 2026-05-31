@@ -82,6 +82,7 @@ add_library(mxb_mixxx_bridge STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/deck_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/track_resolver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/mixxx_listener.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/midi_out.cpp
 )
 target_include_directories(mxb_mixxx_bridge PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge
@@ -118,6 +119,13 @@ add_executable(mxb_bridge_tests
 target_link_libraries(mxb_bridge_tests PRIVATE mxb_mixxx_bridge)
 enable_testing()
 add_test(NAME mxb_bridge_tests COMMAND mxb_bridge_tests)
+
+# Outbound control-mapping unit tests (Studio control -> MIDI).
+add_executable(mxb_control_map_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/test_control_map.cpp
+)
+target_link_libraries(mxb_control_map_tests PRIVATE mxb_mixxx_bridge)
+add_test(NAME mxb_control_map_tests COMMAND mxb_control_map_tests)
 
 # Deck-panel render smoke test (no device).
 add_executable(mxb_deck_panel_tests

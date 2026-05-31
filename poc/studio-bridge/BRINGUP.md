@@ -43,8 +43,10 @@ copy build\lib\rebellion.dll .
 ## 3. loopMIDI
 
 1. Install loopMIDI (https://www.tobias-erichsen.de/software/loopmidi.html).
-2. In its window, type a port name **`Mixxx-State`** and click **+**.
-   You should see `Mixxx-State` in the port list. Leave loopMIDI running.
+2. Create **two** ports — type each name, click **+**:
+   - **`Mixxx-State`** — Mixxx → bridge (track state, position).
+   - **`Studio-Control`** — bridge → Mixxx (button/pad/knob presses).
+   Leave loopMIDI running.
 
 ## 4. Mixxx mapping
 
@@ -55,13 +57,17 @@ The two files in `mixxx/` must go in Mixxx's **controllers** folder — the
 ```
 copy mixxx\Mixxx-Studio-Bridge.midi.xml    "%LOCALAPPDATA%\Mixxx\controllers\"
 copy mixxx\Mixxx-Studio-Bridge.scripts.js  "%LOCALAPPDATA%\Mixxx\controllers\"
+copy mixxx\Studio-Control.midi.xml         "%LOCALAPPDATA%\Mixxx\controllers\"
 ```
 (create the `controllers` folder if it doesn't exist.)
 
 Then in Mixxx → **Preferences → Controllers**:
-1. Select **`Mixxx-State`** in the device list (the loopMIDI port shows up here).
-2. **Load Mapping** → **Mixxx Studio Bridge (state)**.
-3. Tick **Enabled** → **Apply**.
+1. Select **`Mixxx-State`** → **Load Mapping** → **Mixxx Studio Bridge (state)** →
+   tick **Enabled**.
+2. Select **`Studio-Control`** → **Load Mapping** → **Mixxx Studio Bridge (control)** →
+   tick **Enabled**. (This makes Studio buttons act; starter 2-deck set — extend
+   or use the Learning Wizard to bind more.)
+3. **Apply**.
 
 Confirm it loaded: Mixxx **Help → … (or the log file)** shows `StudioBridge> init`.
 
@@ -74,9 +80,13 @@ Order matters a little — have Mixxx emitting before/around launching the bridg
 3. Studio plugged in (USB + PSU) and powered on.
 4. From the repo root:
    ```
-   studio_bridge.exe "%LOCALAPPDATA%\Mixxx" "Mixxx-State"
+   studio_bridge.exe "%LOCALAPPDATA%\Mixxx" "Mixxx-State" "Studio-Control"
    ```
-   (first arg = Mixxx data dir with `mixxxdb.sqlite`; second = port name.)
+   (arg1 = Mixxx data dir with `mixxxdb.sqlite`; arg2 = inbound state port;
+   arg3 = outbound control port. arg2/arg3 default to those names.)
+   On start it prints `forwarding Studio controls -> "Studio-Control"`; if it
+   can't find that port it lists the available outputs and continues (screens
+   still work, buttons just won't reach Mixxx).
 
 You should see the boot splash, then **"waiting for Mixxx on deck A/B"** on each
 screen. **Load a track on Deck 1 in Mixxx** → Deck A fills in (title, BPM,
