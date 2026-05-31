@@ -85,10 +85,12 @@ decode → both-screen render. The fingerprint identity (our pivot from the abse
 `file_path`) matched a real library row first try. Maschine Studio serial
 26C67082, loopMIDI port `Mixxx-State`.
 
-**Known issue (open):** the rendered waveform is not correct (shape/scale) even
-though the track resolves and metadata is right — under investigation. Likely in
-`deck_panel` full-track overview mapping or the detailed-vs-overview blob choice,
-not the decode (which is independently verified by `waveform-inspect`).
+**Waveform rendering (resolved):** the initial full-track max-overview looked
+like a solid block ("all highs"). Replaced with a scrolling ~30s window centred
+on the playhead, reduced by average + peak outline, and **frequency-band
+colouring** decoded from `signal_filtered` (low→R, mid→G, high→B) — all confirmed
+colouring correctly on hardware. Position is 14-bit for smooth scroll; the 2s
+identity heartbeat is a no-op for the already-loaded track (no flicker).
 
 ## Build & test
 
