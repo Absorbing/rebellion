@@ -4,6 +4,9 @@
 
 #include "mixxx_listener.hpp"
 
+#include <cstdio>
+#include <cstdlib>
+
 #ifdef MXB_HAVE_RTMIDI
 #include <RtMidi.h>
 #endif
@@ -25,6 +28,14 @@ MixxxListener::~MixxxListener() { close(); }
 
 static void rtCallback(double /*dt*/, std::vector<unsigned char>* msg, void* user) {
     if (!msg || msg->empty()) return;
+    // Opt-in raw dump (set MXB_DEBUG_MIDI=1). Skip CC (0xB0) so the 20Hz position
+    // stream doesn't bury SysEx/notes; identity = "F0 7D 01 ...".
+    static const bool dbg = std::getenv("MXB_DEBUG_MIDI") != nullptr;
+    if (dbg && ((*msg)[0] & 0xF0) != 0xB0) {
+        std::fprintf(stderr, "MIDI<- ");
+        for (unsigned char b : *msg) std::fprintf(stderr, "%02X ", b);
+        std::fprintf(stderr, "\n");
+    }
     auto* dec = static_cast<MidiDecoder*>(user);
     dec->onMessage(msg->data(), msg->size());
 }
