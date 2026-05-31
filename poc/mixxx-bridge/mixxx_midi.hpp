@@ -99,6 +99,9 @@ public:
 private:
     void onChannelVoice(uint8_t status, uint8_t d1, uint8_t d2);
     Sink sink_;
+    // 14-bit play position arrives as CC 0x12 (MSB) then CC 0x32 (LSB) per
+    // channel; stash the MSB until the LSB completes it. Index by 1..16 channel.
+    uint8_t posMsb_[17] = {0};
 };
 
 }  // namespace mxb

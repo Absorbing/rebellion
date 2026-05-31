@@ -23,11 +23,16 @@ const uint16_t PANEL = rgb565(19, 28, 46);
 const uint16_t CYAN  = rgb565(0, 212, 255);
 const uint16_t WHITE = 0xFFFF;
 const uint16_t DIM   = rgb565(120, 130, 150);
-const uint16_t LOWC  = rgb565(0, 120, 220);
-const uint16_t MIDC  = rgb565(0, 210, 160);
-const uint16_t HIC   = rgb565(255, 90, 108);
-const uint16_t PLAYED= rgb565(60, 70, 95);   // waveform behind the playhead
-const uint16_t AMBER = rgb565(255, 184, 64);
+const uint16_t GREEN      = rgb565(0, 210, 160);   // PLAY indicator
+const uint16_t WAVE       = rgb565(0, 212, 255);   // average body, ahead of playhead
+const uint16_t WAVE_DIM   = rgb565(0, 80, 130);    // peak outline, ahead of playhead
+const uint16_t WAVE_PLAYED= rgb565(95, 140, 165);  // average body, already played
+const uint16_t PLAYED     = rgb565(45, 55, 78);    // peak outline, already played
+const uint16_t AMBER      = rgb565(255, 184, 64);
+
+// Scrolling waveform shows a fixed time span centred on the playhead, so the
+// zoom is consistent across tracks (independent of track length).
+constexpr double kWindowSeconds = 30.0;
 }  // namespace dp
 
 inline int textWidth(const std::string& s, int scale) {
@@ -90,23 +95,41 @@ inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d) {
     if (d.hasWaveform && !d.waveform.mono.empty()) {
         const auto& mono = d.waveform.mono;
         const size_t total = mono.size();
-        const int playX = static_cast<int>(d.position * kW);
+
+        // Scrolling window centred on the playhead; clamp to the track at the
+        // ends. Reduce each column by AVERAGE (body) with a PEAK outline so the
+        // quiet/loud envelope shows instead of saturating to "all highs".
+        const double vrate = d.waveform.visual_sample_rate > 0.0
+                                 ? d.waveform.visual_sample_rate : 441.0;
+        size_t winLen = static_cast<size_t>(kWindowSeconds * vrate);
+        if (winLen < 1) winLen = 1;
+        if (winLen > total) winLen = total;
+
+        const double posF = d.position * static_cast<double>(total);
+        long start = static_cast<long>(posF - winLen / 2.0);
+        const long maxStart = static_cast<long>(total) - static_cast<long>(winLen);
+        if (start < 0) start = 0;
+        if (start > maxStart) start = maxStart;
+
+        const int playX = static_cast<int>(
+            (posF - static_cast<double>(start)) / static_cast<double>(winLen) * kW);
+
         for (int x = 0; x < kW; ++x) {
-            size_t a = static_cast<size_t>(x)     * total / kW;
-            size_t b = static_cast<size_t>(x + 1) * total / kW;
+            size_t a = static_cast<size_t>(start) + static_cast<size_t>(x)     * winLen / kW;
+            size_t b = static_cast<size_t>(start) + static_cast<size_t>(x + 1) * winLen / kW;
             if (b > total) b = total;
-            int peak = 0;
-            for (size_t i = a; i < b; ++i) if (mono[i] > peak) peak = mono[i];
-            int h = peak * halfH / 255;
-            uint16_t c;
-            if (x <= playX) {
-                c = PLAYED;                                   // already played: dim
-            } else {
-                c = peak > 200 ? HIC : (peak > 110 ? MIDC : LOWC);
+            int peak = 0, n = 0, sum = 0;
+            for (size_t i = a; i < b && i < total; ++i) {
+                int v = mono[i];
+                if (v > peak) peak = v;
+                sum += v; ++n;
             }
-            fb.vline(x, mid - h, mid + h, c);
+            const int hPeak = peak * halfH / 255;
+            const int hAvg  = (n ? sum / n : 0) * halfH / 255;
+            const bool played = x < playX;
+            fb.vline(x, mid - hPeak, mid + hPeak, played ? PLAYED      : WAVE_DIM);
+            fb.vline(x, mid - hAvg,  mid + hAvg,  played ? WAVE_PLAYED : WAVE);
         }
-        // playhead
         fb.vline(playX, wTop, wBot, WHITE);
     } else {
         fb.text(150, mid - 4, "waveform not analysed", DIM, 1);
@@ -128,7 +151,7 @@ inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d) {
     };
     flag("LOOP", d.loop, AMBER);
     flag("SYNC", d.sync, CYAN);
-    flag(d.playing ? "PLAY" : "", d.playing, MIDC);
+    flag(d.playing ? "PLAY" : "", d.playing, GREEN);
 }
 
 }  // namespace mxb

@@ -93,7 +93,8 @@ int main() {
 
         dec.onMessage({0x90, 0x10, 0x7F});  // deck1 play on
         dec.onMessage({0xB0, 0x10, 64});    // deck1 bpm CC mid
-        dec.onMessage({0xB0, 0x12, 64});    // deck1 playposition ~0.5
+        dec.onMessage({0xB0, 0x12, 64});    // deck1 position MSB (no event yet)
+        dec.onMessage({0xB0, 0x32, 0});     // deck1 position LSB -> ~0.5 (8192/16383)
         dec.onMessage({0x92, 0x23, 0x7F});  // deck3 hotcue 3 activate
         dec.onMessage({0xBF, 0x10, 127});   // master crossfader full right
 

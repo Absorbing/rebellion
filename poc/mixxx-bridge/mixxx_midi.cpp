@@ -125,7 +125,13 @@ void MidiDecoder::onChannelVoice(uint8_t status, uint8_t d1, uint8_t d2) {
             case 0x10: e.type = BridgeEventType::Bpm;
                        e.value = kBpmMin + (d2 / 127.0) * (kBpmMax - kBpmMin); break;
             case 0x11: e.type = BridgeEventType::Rate;         e.value = d2 / 127.0; break;
-            case 0x12: e.type = BridgeEventType::PlayPosition; e.value = d2 / 127.0; break;
+            case 0x12: posMsb_[channel] = d2; return;          // 14-bit position MSB; wait for LSB
+            case 0x32: {                                        // 14-bit position LSB -> emit
+                int v14 = (static_cast<int>(posMsb_[channel]) << 7) | d2;
+                e.type = BridgeEventType::PlayPosition;
+                e.value = v14 / 16383.0;
+                break;
+            }
             case 0x16: e.type = BridgeEventType::VuMeter;      e.value = d2 / 127.0; break;
             default: return;
         }

@@ -144,7 +144,10 @@ StudioBridge.tickPosition = function () {
         if (engine.getValue(grp, "track_loaded") > 0) {
             var p = engine.getValue(grp, "playposition");      // 0..1 (can over/undershoot)
             p = Math.max(0, Math.min(1, p));
-            midi.sendShortMsg(0xB0 + (n - 1), 0x12, Math.round(p * 127));
+            // 14-bit so a zoomed-in scroll is smooth: CC 0x12 = MSB, 0x32 = LSB.
+            var v = Math.round(p * 16383);
+            midi.sendShortMsg(0xB0 + (n - 1), 0x12, (v >> 7) & 0x7F);
+            midi.sendShortMsg(0xB0 + (n - 1), 0x32, v & 0x7F);
         }
     }
 };
