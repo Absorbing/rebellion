@@ -62,6 +62,16 @@ mxb::MidiOut g_out;
 // on. GROUP_A/B set it. Set in rpc_callback (main thread), read in the loop.
 int g_focusedDeck = 1;
 
+// Interactive mapping tool (MXB_LED_PROBE=1): KNOB1 scrubs an LED address (lit on
+// the device, shown on screen 0); any control pressed/turned is echoed on screen
+// 1. Lets us map LED indices >102 and confirm input ids without overshoot.
+bool        g_mapper    = false;
+int         g_ledAddr   = 1;
+bool        g_addrDirty = true;
+std::string g_lastInput = "(press / turn a control)";
+bool        g_inputDirty = true;
+constexpr int kMapMax = 200;   // must match the Studio ledcnt in mappings.lua
+
 int knobNameToIndex(const std::string& name) {  // "KNOB1".."KNOB8" -> 1..8, else 0
     if (name.size() == 5 && name.compare(0, 4, "KNOB") == 0 &&
         name[4] >= '1' && name[4] <= '8')
@@ -153,6 +163,33 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
         return 0;
     }
 
+    // --- Interactive mapping tool: capture instead of forward ----------------
+    if (g_mapper) {
+        if (ev == "KNOB_ROTATE") {
+            std::string knob = fields.value("knob", std::string());
+            std::string dir  = fields.value("direction", std::string());
+            if (knob == "KNOB1") {  // scrub the LED address (one detent = +/-1)
+                g_ledAddr += (dir == "CLOCKWISE") ? 1 : -1;
+                if (g_ledAddr < 1) g_ledAddr = 1;
+                if (g_ledAddr > kMapMax) g_ledAddr = kMapMax;
+                g_addrDirty = true;
+            }
+            g_lastInput = "KNOB " + knob + " " + dir;
+        } else if (ev == "BTN_DATA") {
+            g_lastInput = "BTN " + fields.value("button", std::string("?")) +
+                          " id=" + std::to_string(fields.value("buttonid", -1)) +
+                          " " + fields.value("state", std::string());
+        } else if (ev == "PAD_DATA") {
+            g_lastInput = "PAD " + std::to_string(fields.value("padid", -1)) +
+                          " " + fields.value("state", std::string()) +
+                          " p=" + std::to_string(fields.value("cpressure", 0));
+        } else {
+            g_lastInput = ev;  // catch-all (e.g. unparsed jog)
+        }
+        g_inputDirty = true;
+        return 0;
+    }
+
     // --- Studio controls -> outbound MIDI (forward to Mixxx) -----------------
     if (ev == "BTN_DATA") {
         int id = fields.value("buttonid", -1);
@@ -207,6 +244,7 @@ void renderSplash(mxb::Framebuffer& fb, int deckNum) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    g_mapper = std::getenv("MXB_LED_PROBE") != nullptr;
     g_mixxxDir = (argc > 1) ? argv[1] : defaultMixxxDir();
     const std::string midiPort = (argc > 2) ? argv[2] : "Mixxx-State";
     const std::string outPort  = (argc > 3) ? argv[3] : "Studio-Control";
@@ -281,29 +319,34 @@ int main(int argc, char** argv) {
         mxb::Framebuffer fb; renderSplash(fb, kDeckForDisplay[disp]); sendFB(disp, fb);
     }
 
-    // LED probe (MXB_LED_PROBE=1): cycle every LED index, showing the number on
-    // the screen, so the real button->index map can be read off the hardware.
-    // The Studio LED indices in mappings.lua are placeholders; this confirms them.
-    if (std::getenv("MXB_LED_PROBE")) {
-        constexpr int kLedCnt = 103;   // Studio ledcnt (mappings.lua)
-        std::fprintf(stderr, "LED PROBE: cycling indices 1..%d (~500ms each). "
-                             "Note which button/pad lights at each number.\n", kLedCnt);
-        int idx = 1, prev = 0;
-        auto last = std::chrono::steady_clock::now();
+    // Interactive mapping tool (MXB_LED_PROBE=1): KNOB1 scrubs the lit LED address
+    // (screen 0); any control you press/turn is echoed (screen 1). Maps LED
+    // indices (incl. >102 now that ledcnt is bumped) + confirms input ids.
+    if (g_mapper) {
+        std::fprintf(stderr, "MAPPER: turn KNOB1 to move the lit LED (1..%d, screen 0); "
+                             "press/turn any control to see its id (screen 1). Ctrl+C to exit.\n",
+                     kMapMax);
+        int prevAddr = 0;
         for (;;) {
             rebellion_loop(INPUT_POLL_MS);
-            if (msSince(last) >= 500) {
-                if (prev > 0) sendLed(prev, mxb::ledcolor::OFF, 0);
-                sendLed(idx, mxb::ledcolor::WHITE, 3);
-                for (int disp = 0; disp < 2; ++disp) {
-                    mxb::Framebuffer fb; fb.clear(mxb::dp::BG);
-                    std::string t = "LED " + std::to_string(idx);
-                    fb.text((mxb::kW - mxb::textWidth(t, 4)) / 2, 110, t, mxb::dp::CYAN, 4);
-                    sendFB(disp, fb);
-                }
-                prev = idx;
-                if (++idx > kLedCnt) idx = 1;
-                last = std::chrono::steady_clock::now();
+            if (g_addrDirty) {
+                if (prevAddr > 0 && prevAddr != g_ledAddr) sendLed(prevAddr, mxb::ledcolor::OFF, 0);
+                sendLed(g_ledAddr, mxb::ledcolor::WHITE, 3);
+                mxb::Framebuffer fb; fb.clear(mxb::dp::BG);
+                fb.text(150, 70, "LED ADDRESS", mxb::dp::DIM, 1);
+                std::string t = std::to_string(g_ledAddr);
+                fb.text((mxb::kW - mxb::textWidth(t, 6)) / 2, 100, t, mxb::dp::CYAN, 6);
+                fb.text(120, 200, "turn KNOB1 to move", mxb::dp::DIM, 1);
+                sendFB(0, fb);
+                prevAddr = g_ledAddr;
+                g_addrDirty = false;
+            }
+            if (g_inputDirty) {
+                mxb::Framebuffer fb; fb.clear(mxb::dp::BG);
+                fb.text(150, 70, "LAST INPUT", mxb::dp::DIM, 1);
+                fb.text(20, 120, g_lastInput, mxb::dp::WHITE, 2);
+                sendFB(1, fb);
+                g_inputDirty = false;
             }
         }
     }
