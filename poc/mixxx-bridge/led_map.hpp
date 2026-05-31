@@ -30,31 +30,45 @@ struct LedCmd {
 };
 
 // Which LED index belongs to which control. Indices are unconfirmed for the
-// Studio (placeholders in mappings.lua) — verify on hardware and edit here.
+// Studio (placeholders in mappings.lua) — verify on hardware with MXB_LED_PROBE
+// and edit here. Defaults guess index = button id.
 struct LedLayout {
-    // Deck play buttons: GROUP_A = deck 1, GROUP_B = deck 2 (button ids 16/19;
-    // LED index guessed = button id until the probe confirms).
-    int deckPlay[3] = {0, 16, 19};
-    // Deck cue buttons: GROUP_C / GROUP_D (button ids 20/23).
-    int deckCue[3]  = {0, 20, 23};
+    int groupA = 16;   // deck 1 focus indicator (GROUP_A button)
+    int groupB = 19;   // deck 2 focus indicator (GROUP_B button)
+    int play   = 29;   // PLAY button  (reflects focused deck)
+    int cue    = 28;   // RESTART button used as CUE
+    int sync   = 27;   // GRID button used as SYNC
 };
 
-// Compute the desired LED commands for decks 1..2 from the model.
-// play button: playing -> GREEN bright, loaded/stopped -> GREEN dim, empty -> off.
-// cue button:  loaded -> WHITE dim, else off.
-inline void computeDeckLeds(const DeckModel& m, const LedLayout& L,
-                            std::vector<LedCmd>& out) {
+// Compute LED commands for the deck-focus model:
+//   GROUP_A/B : focused deck -> CYAN bright; other deck loaded -> BLUE dim; else off
+//   PLAY      : focused deck playing -> GREEN bright; loaded -> GREEN dim; else off
+//   CUE       : focused deck loaded -> WHITE dim
+//   SYNC      : focused deck sync on -> BLUE bright; loaded -> BLUE dim; else off
+inline void computeLeds(const DeckModel& m, int focusedDeck, const LedLayout& L,
+                        std::vector<LedCmd>& out) {
     out.clear();
-    for (int n = 1; n <= 2; ++n) {
-        const DeckState& d = m.deck(n);
-        LedCmd play{L.deckPlay[n], ledcolor::OFF, 0};
-        if (d.loaded) { play.color = ledcolor::GREEN; play.intensity = d.playing ? 3 : 1; }
-        out.push_back(play);
+    auto focusInd = [&](int idx, int deck) {
+        LedCmd c{idx, ledcolor::OFF, 0};
+        if (focusedDeck == deck)      { c.color = ledcolor::CYAN; c.intensity = 3; }
+        else if (m.deck(deck).loaded) { c.color = ledcolor::BLUE; c.intensity = 1; }
+        out.push_back(c);
+    };
+    focusInd(L.groupA, 1);
+    focusInd(L.groupB, 2);
 
-        LedCmd cue{L.deckCue[n], ledcolor::OFF, 0};
-        if (d.loaded) { cue.color = ledcolor::WHITE; cue.intensity = 1; }
-        out.push_back(cue);
-    }
+    const DeckState& f = m.deck(focusedDeck);
+    LedCmd play{L.play, ledcolor::OFF, 0};
+    if (f.loaded) { play.color = ledcolor::GREEN; play.intensity = f.playing ? 3 : 1; }
+    out.push_back(play);
+
+    out.push_back({L.cue, static_cast<uint8_t>(f.loaded ? ledcolor::WHITE : ledcolor::OFF),
+                   static_cast<uint8_t>(f.loaded ? 1 : 0)});
+
+    LedCmd sync{L.sync, ledcolor::OFF, 0};
+    if (f.sync)        { sync.color = ledcolor::BLUE; sync.intensity = 3; }
+    else if (f.loaded) { sync.color = ledcolor::BLUE; sync.intensity = 1; }
+    out.push_back(sync);
 }
 
 }  // namespace mxb

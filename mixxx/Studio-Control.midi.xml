@@ -25,17 +25,22 @@
   </info>
   <controller id="MixxxStudioBridgeControl">
     <controls>
-      <!-- GROUP A / B = Deck 1 / Deck 2 play-pause (note 16 / 19 on ch1). -->
+      <!-- Deck-focus transport: the bridge routes the single PLAY/CUE/SYNC
+           buttons to the focused deck as per-deck notes (GROUP_A/B pick focus,
+           handled inside the bridge, not here).
+             play  deck1=0x60 deck2=0x61 ; cue 0x62/0x63 ; sync 0x64/0x65 -->
       <control><group>[Channel1]</group><key>play</key>
-        <status>0x90</status><midino>0x10</midino><options><normal/></options></control>
+        <status>0x90</status><midino>0x60</midino><options><normal/></options></control>
       <control><group>[Channel2]</group><key>play</key>
-        <status>0x90</status><midino>0x13</midino><options><normal/></options></control>
-
-      <!-- GROUP C / D = Deck 1 / Deck 2 cue (note 20 / 23). -->
+        <status>0x90</status><midino>0x61</midino><options><normal/></options></control>
       <control><group>[Channel1]</group><key>cue_default</key>
-        <status>0x90</status><midino>0x14</midino><options><normal/></options></control>
+        <status>0x90</status><midino>0x62</midino><options><normal/></options></control>
       <control><group>[Channel2]</group><key>cue_default</key>
-        <status>0x90</status><midino>0x17</midino><options><normal/></options></control>
+        <status>0x90</status><midino>0x63</midino><options><normal/></options></control>
+      <control><group>[Channel1]</group><key>sync_enabled</key>
+        <status>0x90</status><midino>0x64</midino><options><normal/></options></control>
+      <control><group>[Channel2]</group><key>sync_enabled</key>
+        <status>0x90</status><midino>0x65</midino><options><normal/></options></control>
 
       <!-- Pads 1-8 (ch2) = Deck 1 hotcues 1-8 activate. -->
       <control><group>[Channel1]</group><key>hotcue_1_activate</key>

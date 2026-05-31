@@ -51,8 +51,10 @@ inline std::string fmtTime(double seconds) {
     return buf;
 }
 
-// Render deck `deckNum` (1..4 -> A..D) from `d` into `fb`.
-inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d) {
+// Render deck `deckNum` (1..4 -> A..D) from `d` into `fb`. `focused` draws a
+// border marking the deck the transport buttons currently act on.
+inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d,
+                            bool focused = false) {
     using namespace dp;
     fb.clear(BG);
 
@@ -180,6 +182,14 @@ inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d) {
     flag("LOOP", d.loop, AMBER);
     flag("SYNC", d.sync, CYAN);
     flag(d.playing ? "PLAY" : "", d.playing, GREEN);
+
+    // Focus border (the deck the transport buttons act on), drawn last.
+    if (focused) {
+        fb.fillRect(0, 0, kW, 2, CYAN);
+        fb.fillRect(0, kH - 2, kW, 2, CYAN);
+        fb.fillRect(0, 0, 2, kH, CYAN);
+        fb.fillRect(kW - 2, 0, 2, kH, CYAN);
+    }
 }
 
 }  // namespace mxb

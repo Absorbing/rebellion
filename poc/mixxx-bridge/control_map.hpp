@@ -51,4 +51,19 @@ inline MidiOutMsg mapKnobRotate(int knobIndex, bool clockwise) {
              clockwise ? kRelCW : kRelCCW };
 }
 
+// Deck-focus model: the Studio has one transport, so PLAY/CUE/SYNC are routed by
+// the bridge to the *focused* deck as dedicated per-deck notes (ch 1). Mixxx maps
+// these to the matching deck.  note = base + action*2 + (deck-1):
+//   play  deck1=0x60 deck2=0x61 ; cue 0x62/0x63 ; sync 0x64/0x65
+enum class Transport { Play = 0, Cue = 1, Sync = 2 };
+constexpr uint8_t kTransportBase = 0x60;
+
+inline MidiOutMsg mapTransport(Transport t, int deck, bool pressed) {
+    uint8_t note = static_cast<uint8_t>(kTransportBase +
+                   static_cast<int>(t) * 2 + (deck - 1));
+    return { static_cast<uint8_t>(0x90 | (kButtonChannel - 1)),
+             note,
+             static_cast<uint8_t>(pressed ? 0x7F : 0x00) };
+}
+
 }  // namespace mxb

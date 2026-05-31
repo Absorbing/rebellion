@@ -9,30 +9,37 @@ static int g_fail = 0;
 #define CHECK(c, m) do { if(!(c)){ std::printf("FAIL: %s\n", m); ++g_fail; } } while(0)
 
 int main() {
-    LedLayout L;  // defaults: deck1 play=16 cue=20, deck2 play=19 cue=23
+    LedLayout L;  // groupA=16 groupB=19 play=29 cue=28 sync=27
     DeckModel model([](const TrackFingerprint&, std::string&, std::string&,
                        double&, Waveform&) { return false; });  // loader unused
 
     std::vector<LedCmd> cmds;
-
-    // Empty decks -> all off.
-    computeDeckLeds(model, L, cmds);
-    CHECK(cmds.size() == 4, "4 led commands (play+cue x2 decks)");
-    for (auto& c : cmds) CHECK(c.color == ledcolor::OFF && c.intensity == 0, "empty deck led off");
-
-    // Deck 1 loaded + playing; deck 2 loaded + stopped.
-    model.deck(1).loaded = true; model.deck(1).playing = true;
-    model.deck(2).loaded = true; model.deck(2).playing = false;
-    computeDeckLeds(model, L, cmds);
-
     auto find = [&](int idx) -> LedCmd {
         for (auto& c : cmds) if (c.index == idx) return c;
         return LedCmd{-1, 99, 99};
     };
-    CHECK(find(16).color == ledcolor::GREEN && find(16).intensity == 3, "deck1 play -> green bright");
-    CHECK(find(19).color == ledcolor::GREEN && find(19).intensity == 1, "deck2 loaded -> green dim");
-    CHECK(find(20).color == ledcolor::WHITE && find(20).intensity == 1, "deck1 cue -> white dim");
-    CHECK(find(23).color == ledcolor::WHITE && find(23).intensity == 1, "deck2 cue -> white dim");
+
+    // Empty decks, focus on deck 1 -> GROUP_A focus (cyan), everything else off.
+    computeLeds(model, 1, L, cmds);
+    CHECK(cmds.size() == 5, "5 led commands (groupA/B, play, cue, sync)");
+    CHECK(find(16).color == ledcolor::CYAN && find(16).intensity == 3, "deck1 focused -> cyan");
+    CHECK(find(19).color == ledcolor::OFF, "deck2 unfocused+empty -> off");
+    CHECK(find(29).color == ledcolor::OFF, "play off when focused deck empty");
+
+    // Deck 1 loaded + playing + sync; deck 2 loaded. Focus deck 1.
+    model.deck(1).loaded = true; model.deck(1).playing = true; model.deck(1).sync = true;
+    model.deck(2).loaded = true;
+    computeLeds(model, 1, L, cmds);
+    CHECK(find(16).color == ledcolor::CYAN, "deck1 still focused -> cyan");
+    CHECK(find(19).color == ledcolor::BLUE && find(19).intensity == 1, "deck2 loaded+unfocused -> blue dim");
+    CHECK(find(29).color == ledcolor::GREEN && find(29).intensity == 3, "PLAY -> green bright (focused playing)");
+    CHECK(find(28).color == ledcolor::WHITE, "CUE -> white (focused loaded)");
+    CHECK(find(27).color == ledcolor::BLUE && find(27).intensity == 3, "SYNC -> blue bright (focused sync)");
+
+    // Switch focus to deck 2 (loaded, stopped) -> PLAY dim green, reflects deck 2.
+    computeLeds(model, 2, L, cmds);
+    CHECK(find(19).color == ledcolor::CYAN, "deck2 now focused -> cyan");
+    CHECK(find(29).color == ledcolor::GREEN && find(29).intensity == 1, "PLAY dim (focused deck2 loaded, stopped)");
 
     if (g_fail == 0) std::printf("ALL LED-MAP TESTS PASSED\n");
     else             std::printf("%d CHECK(S) FAILED\n", g_fail);

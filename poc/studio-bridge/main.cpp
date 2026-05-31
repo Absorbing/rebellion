@@ -58,6 +58,10 @@ std::string g_mixxxDir;
 // so direct sends are safe (no cross-thread concern like the inbound listener).
 mxb::MidiOut g_out;
 
+// Deck-focus model: which deck the single transport buttons (PLAY/CUE/SYNC) act
+// on. GROUP_A/B set it. Set in rpc_callback (main thread), read in the loop.
+int g_focusedDeck = 1;
+
 int knobNameToIndex(const std::string& name) {  // "KNOB1".."KNOB8" -> 1..8, else 0
     if (name.size() == 5 && name.compare(0, 4, "KNOB") == 0 &&
         name[4] >= '1' && name[4] <= '8')
@@ -103,10 +107,10 @@ void sendLed(int index, uint8_t color, uint8_t intensity) {
 
 // Push deck-state LEDs, sending only the ones whose colour/intensity changed.
 mxb::LedLayout g_ledLayout;
-void updateLeds(mxb::DeckModel& model) {
+void updateLeds(mxb::DeckModel& model, int focusedDeck) {
     static std::map<int, mxb::LedCmd> last;
     std::vector<mxb::LedCmd> want;
-    mxb::computeDeckLeds(model, g_ledLayout, want);
+    mxb::computeLeds(model, focusedDeck, g_ledLayout, want);
     for (const auto& c : want) {
         if (c.index <= 0) continue;
         auto it = last.find(c.index);
@@ -154,8 +158,18 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
     if (ev == "BTN_DATA") {
         int id = fields.value("buttonid", -1);
         std::string state = fields.value("state", "");
-        if (id >= 0 && (state == "PRESSED" || state == "RELEASED"))
-            g_out.send(mxb::mapButton(id, state == "PRESSED"));
+        if (id < 0 || (state != "PRESSED" && state != "RELEASED")) return 0;
+        const bool pressed = (state == "PRESSED");
+        // Deck-focus model: GROUP_A/B pick the active deck; the single transport
+        // buttons act on it. Everything else is forwarded raw for Mixxx mapping.
+        switch (id) {
+            case 16: if (pressed) g_focusedDeck = 1; break;   // GROUP_A -> focus deck 1
+            case 19: if (pressed) g_focusedDeck = 2; break;   // GROUP_B -> focus deck 2
+            case 29: g_out.send(mxb::mapTransport(mxb::Transport::Play, g_focusedDeck, pressed)); break;  // PLAY
+            case 28: g_out.send(mxb::mapTransport(mxb::Transport::Cue,  g_focusedDeck, pressed)); break;  // RESTART -> CUE
+            case 27: g_out.send(mxb::mapTransport(mxb::Transport::Sync, g_focusedDeck, pressed)); break;  // GRID -> SYNC
+            default: g_out.send(mxb::mapButton(id, pressed)); break;
+        }
     } else if (ev == "PAD_DATA") {
         int pad = fields.value("padid", -1);
         std::string state = fields.value("state", "");
@@ -299,6 +313,7 @@ int main(int argc, char** argv) {
                          "Load tracks in Mixxx. Ctrl+C to exit.\n");
 
     auto lastDraw = std::chrono::steady_clock::now();
+    int lastFocus = 0;
     for (;;) {
         rebellion_loop(INPUT_POLL_MS);
 
@@ -309,7 +324,15 @@ int main(int argc, char** argv) {
             batch.swap(g_evQueue);
         }
         for (const auto& e : batch) model.apply(e);
-        updateLeds(model);  // reflect deck play/cue state on the button LEDs
+
+        // Focus changed (GROUP_A/B) -> repaint both deck borders.
+        if (g_focusedDeck != lastFocus) {
+            model.deck(1).dirty = true;
+            model.deck(2).dirty = true;
+            lastFocus = g_focusedDeck;
+        }
+
+        updateLeds(model, g_focusedDeck);  // focus + transport state on the LEDs
 
         // Redraw any deck whose state changed, throttled. (Full-frame overview
         // pushes are heavy; SPEC §4.4 diff-regions is the later optimisation.)
@@ -319,7 +342,7 @@ int main(int argc, char** argv) {
                 mxb::DeckState& d = model.deck(deckNum);
                 if (d.dirty) {
                     mxb::Framebuffer fb;
-                    mxb::renderDeckPanel(fb, deckNum, d);
+                    mxb::renderDeckPanel(fb, deckNum, d, deckNum == g_focusedDeck);
                     sendFB(disp, fb);
                     d.dirty = false;
                 }
