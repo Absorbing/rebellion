@@ -26,6 +26,13 @@ struct Waveform {
     int    channels = 0;              // from signal_all (2 = stereo)
     // Per-frame mono amplitude 0..255 (downmix = max over channels).
     std::vector<uint8_t> mono;
+    // Per-frame band amplitudes 0..255 from signal_filtered (Mixxx maps these to
+    // an RGB waveform: low->red, mid->green, high->blue). Empty if the analysis
+    // blob has no filtered signal.
+    std::vector<uint8_t> low, mid, high;
+    bool hasBands() const {
+        return !low.empty() && !mid.empty() && !high.empty();
+    }
 
     double durationSeconds() const {
         return visual_sample_rate > 0.0

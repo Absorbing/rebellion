@@ -114,21 +114,45 @@ inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d) {
         const int playX = static_cast<int>(
             (posF - static_cast<double>(start)) / static_cast<double>(winLen) * kW);
 
+        // Colour from frequency bands when present (Mixxx-style: low->R, mid->G,
+        // high->B), else fall back to a single cyan hue.
+        const bool bands = d.waveform.hasBands();
+        const auto& low = d.waveform.low;
+        const auto& midB = d.waveform.mid;
+        const auto& high = d.waveform.high;
+
         for (int x = 0; x < kW; ++x) {
             size_t a = static_cast<size_t>(start) + static_cast<size_t>(x)     * winLen / kW;
             size_t b = static_cast<size_t>(start) + static_cast<size_t>(x + 1) * winLen / kW;
             if (b > total) b = total;
-            int peak = 0, n = 0, sum = 0;
+            int peak = 0, n = 0, sum = 0, ls = 0, ms = 0, hs = 0, nb = 0;
             for (size_t i = a; i < b && i < total; ++i) {
                 int v = mono[i];
                 if (v > peak) peak = v;
                 sum += v; ++n;
+                if (bands && i < low.size() && i < midB.size() && i < high.size()) {
+                    ls += low[i]; ms += midB[i]; hs += high[i]; ++nb;
+                }
             }
             const int hPeak = peak * halfH / 255;
             const int hAvg  = (n ? sum / n : 0) * halfH / 255;
             const bool played = x < playX;
-            fb.vline(x, mid - hPeak, mid + hPeak, played ? PLAYED      : WAVE_DIM);
-            fb.vline(x, mid - hAvg,  mid + hAvg,  played ? WAVE_PLAYED : WAVE);
+
+            uint16_t body, outline;
+            if (nb > 0) {
+                // Normalise to the dominant band so the hue reads (broadband -> white).
+                int la = ls / nb, ma = ms / nb, ha = hs / nb;
+                int mx = la; if (ma > mx) mx = ma; if (ha > mx) mx = ha; if (mx < 1) mx = 1;
+                int r = la * 255 / mx, g = ma * 255 / mx, bl = ha * 255 / mx;
+                const int bodyMul = played ? 45 : 100;          // dim played region
+                body    = rgb565(r * bodyMul / 100, g * bodyMul / 100, bl * bodyMul / 100);
+                outline = rgb565(r * 35 / 100,      g * 35 / 100,      bl * 35 / 100);
+            } else {
+                body    = played ? WAVE_PLAYED : WAVE;
+                outline = played ? PLAYED      : WAVE_DIM;
+            }
+            fb.vline(x, mid - hPeak, mid + hPeak, outline);
+            fb.vline(x, mid - hAvg,  mid + hAvg,  body);
         }
         fb.vline(playX, wTop, wBot, WHITE);
     } else {

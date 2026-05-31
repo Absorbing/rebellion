@@ -18,9 +18,17 @@ static DeckState makeLoaded() {
     d.bpm = 128.0; d.position = 0.37; d.playing = true; d.sync = true;
     d.waveform.visual_sample_rate = 441.0;
     d.waveform.mono.resize(40000);
-    for (size_t i = 0; i < d.waveform.mono.size(); ++i)
+    d.waveform.low.resize(40000);
+    d.waveform.mid.resize(40000);
+    d.waveform.high.resize(40000);
+    for (size_t i = 0; i < d.waveform.mono.size(); ++i) {
         d.waveform.mono[i] = static_cast<uint8_t>(
             120 + 120 * std::sin(i * 0.001) * std::sin(i * 0.013));
+        // synthetic bands that shift dominance across the track (R->G->B)
+        d.waveform.low[i]  = static_cast<uint8_t>(128 + 127 * std::sin(i * 0.0007));
+        d.waveform.mid[i]  = static_cast<uint8_t>(128 + 127 * std::sin(i * 0.0011 + 2.0));
+        d.waveform.high[i] = static_cast<uint8_t>(128 + 127 * std::sin(i * 0.0017 + 4.0));
+    }
     return d;
 }
 

@@ -112,6 +112,30 @@ bool parseSignal(const uint8_t* data, uint64_t len, std::vector<uint8_t>& mono,
     return true;
 }
 
+// Parse signal_filtered (FilteredSignal): field 1 = low, 2 = mid, 3 = high, each
+// a Signal sub-message; fields 4-7 are cutoff frequencies (skipped). Mixxx colors
+// the waveform from these bands (low->R, mid->G, high->B).
+void parseFiltered(const uint8_t* data, uint64_t len, Waveform& out) {
+    Reader r{data, data + len};
+    while (!r.eof() && r.ok) {
+        uint64_t key = r.varint();
+        if (!r.ok) break;
+        uint32_t field = static_cast<uint32_t>(key >> 3);
+        uint32_t wire = static_cast<uint32_t>(key & 0x07);
+        if (wire == 2 && (field == 1 || field == 2 || field == 3)) {
+            uint64_t n;
+            const uint8_t* s = r.lenField(n);
+            if (!r.ok) break;
+            int ch = 0;
+            if (field == 1)      parseSignal(s, n, out.low,  ch);
+            else if (field == 2) parseSignal(s, n, out.mid,  ch);
+            else                 parseSignal(s, n, out.high, ch);
+        } else {
+            r.skip(wire);
+        }
+    }
+}
+
 }  // namespace
 
 bool decodeWaveformBytes(const uint8_t* data, size_t len, Waveform& out,
@@ -157,6 +181,11 @@ bool decodeWaveformBytes(const uint8_t* data, size_t len, Waveform& out,
                 return false;
             }
             gotSignalAll = true;
+        } else if (field == 4 && wire == 2) {  // signal_filtered (low/mid/high)
+            uint64_t n;
+            const uint8_t* s = r.lenField(n);
+            if (!r.ok) break;
+            parseFiltered(s, n, out);  // optional: colour data, ignore failures
         } else {
             r.skip(wire);
         }
