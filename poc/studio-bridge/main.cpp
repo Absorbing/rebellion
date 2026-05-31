@@ -137,86 +137,100 @@ int msSince(std::chrono::steady_clock::time_point t) {
         std::chrono::steady_clock::now() - t).count());
 }
 
+// Safe JSON field readers — event payloads vary in shape (e.g. an unmapped
+// button has no clean "button" string), so never throw: an uncaught exception
+// here propagates out through rebellion_loop and crashes the whole process.
+std::string jstr(const json& o, const char* k) {
+    if (!o.is_object()) return {};
+    auto it = o.find(k);
+    if (it == o.end()) return {};
+    if (it->is_string())         return it->get<std::string>();
+    if (it->is_number_integer()) return std::to_string(it->get<long long>());
+    return {};
+}
+int jint(const json& o, const char* k, int def) {
+    if (!o.is_object()) return def;
+    auto it = o.find(k);
+    if (it != o.end() && it->is_number()) return it->get<int>();
+    return def;
+}
+
 int rpc_callback(rebellion_message_format mf, rebellion_message_type,
                  const uint8_t* udata, uint32_t) {
     if (mf != REBELLION_MF_JSON) return 0;
-    json j;
-    try { j = json::parse(reinterpret_cast<const char*>(udata)); } catch (...) { return 0; }
-    const std::string ev = j.value("event", "");
-    json d;
-    try { d = j.contains("data") ? j["data"] : json::object(); } catch (...) { d = json::object(); }
-    json fields = d;
-    try { if (d.is_object() && d.contains("data") && d["data"].is_object()) fields = d["data"]; }
-    catch (...) {}
+    try {
+        json j = json::parse(reinterpret_cast<const char*>(udata));
+        const std::string ev = jstr(j, "event");
+        json d = (j.is_object() && j.contains("data")) ? j["data"] : json::object();
+        json fields = d;
+        if (d.is_object() && d.contains("data") && d["data"].is_object()) fields = d["data"];
 
-    if (ev == "device.state") {
-        std::string st;
-        try { st = fields.value("state", ""); } catch (...) {}
-        if (g_serial.empty() && fields.contains("serial") && (st == "ON" || st == "STATE_ON")) {
-            try {
-                g_serial = fields["serial"].is_string()
-                               ? fields["serial"].get<std::string>()
-                               : std::to_string(fields["serial"].get<long long>());
-            } catch (...) {}
-            std::fprintf(stderr, "device ON, serial=%s\n", g_serial.c_str());
-        }
-        return 0;
-    }
-
-    // --- Interactive mapping tool: capture instead of forward ----------------
-    if (g_mapper) {
-        if (ev == "KNOB_ROTATE") {
-            std::string knob = fields.value("knob", std::string());
-            std::string dir  = fields.value("direction", std::string());
-            if (knob == "KNOB1") {  // scrub the LED address (one detent = +/-1)
-                g_ledAddr += (dir == "CLOCKWISE") ? 1 : -1;
-                if (g_ledAddr < 1) g_ledAddr = 1;
-                if (g_ledAddr > kMapMax) g_ledAddr = kMapMax;
-                g_addrDirty = true;
+        if (ev == "device.state") {
+            std::string st = jstr(fields, "state");
+            if (g_serial.empty() && fields.contains("serial") &&
+                (st == "ON" || st == "STATE_ON")) {
+                g_serial = jstr(fields, "serial");
+                std::fprintf(stderr, "device ON, serial=%s\n", g_serial.c_str());
             }
-            g_lastInput = "KNOB " + knob + " " + dir;
-        } else if (ev == "BTN_DATA") {
-            g_lastInput = "BTN " + fields.value("button", std::string("?")) +
-                          " id=" + std::to_string(fields.value("buttonid", -1)) +
-                          " " + fields.value("state", std::string());
-        } else if (ev == "PAD_DATA") {
-            g_lastInput = "PAD " + std::to_string(fields.value("padid", -1)) +
-                          " " + fields.value("state", std::string()) +
-                          " p=" + std::to_string(fields.value("cpressure", 0));
-        } else {
-            g_lastInput = ev;  // catch-all (e.g. unparsed jog)
+            return 0;
         }
-        g_inputDirty = true;
-        return 0;
-    }
 
-    // --- Studio controls -> outbound MIDI (forward to Mixxx) -----------------
-    if (ev == "BTN_DATA") {
-        int id = fields.value("buttonid", -1);
-        std::string state = fields.value("state", "");
-        if (id < 0 || (state != "PRESSED" && state != "RELEASED")) return 0;
-        const bool pressed = (state == "PRESSED");
-        // Deck-focus model: GROUP_A/B pick the active deck; the single transport
-        // buttons act on it. Everything else is forwarded raw for Mixxx mapping.
-        switch (id) {
-            case 16: if (pressed) g_focusedDeck = 1; break;   // GROUP_A -> focus deck 1
-            case 19: if (pressed) g_focusedDeck = 2; break;   // GROUP_B -> focus deck 2
-            case 29: g_out.send(mxb::mapTransport(mxb::Transport::Play, g_focusedDeck, pressed)); break;  // PLAY
-            case 28: g_out.send(mxb::mapTransport(mxb::Transport::Cue,  g_focusedDeck, pressed)); break;  // RESTART -> CUE
-            case 27: g_out.send(mxb::mapTransport(mxb::Transport::Sync, g_focusedDeck, pressed)); break;  // GRID -> SYNC
-            default: g_out.send(mxb::mapButton(id, pressed)); break;
+        // --- Interactive mapping tool: capture instead of forward ------------
+        if (g_mapper) {
+            if (ev == "KNOB_ROTATE") {
+                std::string knob = jstr(fields, "knob"), dir = jstr(fields, "direction");
+                if (knob == "KNOB9") {  // big nav encoder scrubs the LED address (+/-1)
+                    g_ledAddr += (dir == "CLOCKWISE") ? 1 : -1;
+                    if (g_ledAddr < 1) g_ledAddr = 1;
+                    if (g_ledAddr > kMapMax) g_ledAddr = kMapMax;
+                    g_addrDirty = true;
+                }
+                g_lastInput = "KNOB " + knob + " " + dir;
+            } else if (ev == "BTN_DATA") {
+                std::string name = jstr(fields, "button");
+                g_lastInput = "BTN " + (name.empty() ? std::string("?") : name) +
+                              " id=" + std::to_string(jint(fields, "buttonid", -1)) +
+                              " " + jstr(fields, "state");
+            } else if (ev == "PAD_DATA") {
+                g_lastInput = "PAD " + std::to_string(jint(fields, "padid", -1)) +
+                              " " + jstr(fields, "state") +
+                              " p=" + std::to_string(jint(fields, "cpressure", 0));
+            } else {
+                g_lastInput = ev;  // catch-all (e.g. unparsed jog)
+            }
+            g_inputDirty = true;
+            return 0;
         }
-    } else if (ev == "PAD_DATA") {
-        int pad = fields.value("padid", -1);
-        std::string state = fields.value("state", "");
-        int cp = fields.value("cpressure", 0);
-        if (pad >= 1 && (state == "PRESSED" || state == "RELEASED"))
-            g_out.send(mxb::mapPad(pad, state == "PRESSED", cp));
-    } else if (ev == "KNOB_ROTATE") {
-        int k = knobNameToIndex(fields.value("knob", ""));
-        std::string dir = fields.value("direction", "");
-        if (k >= 1 && !dir.empty())
-            g_out.send(mxb::mapKnobRotate(k, dir == "CLOCKWISE"));
+
+        // --- Studio controls -> outbound MIDI (forward to Mixxx) -------------
+        if (ev == "BTN_DATA") {
+            int id = jint(fields, "buttonid", -1);
+            std::string state = jstr(fields, "state");
+            if (id < 0 || (state != "PRESSED" && state != "RELEASED")) return 0;
+            const bool pressed = (state == "PRESSED");
+            // Deck-focus: GROUP_A/B pick the active deck; the single transport
+            // buttons act on it; everything else is forwarded raw.
+            switch (id) {
+                case 16: if (pressed) g_focusedDeck = 1; break;   // GROUP_A -> focus deck 1
+                case 19: if (pressed) g_focusedDeck = 2; break;   // GROUP_B -> focus deck 2
+                case 29: g_out.send(mxb::mapTransport(mxb::Transport::Play, g_focusedDeck, pressed)); break;  // PLAY
+                case 28: g_out.send(mxb::mapTransport(mxb::Transport::Cue,  g_focusedDeck, pressed)); break;  // RESTART -> CUE
+                case 27: g_out.send(mxb::mapTransport(mxb::Transport::Sync, g_focusedDeck, pressed)); break;  // GRID -> SYNC
+                default: g_out.send(mxb::mapButton(id, pressed)); break;
+            }
+        } else if (ev == "PAD_DATA") {
+            int pad = jint(fields, "padid", -1);
+            std::string state = jstr(fields, "state");
+            if (pad >= 1 && (state == "PRESSED" || state == "RELEASED"))
+                g_out.send(mxb::mapPad(pad, state == "PRESSED", jint(fields, "cpressure", 0)));
+        } else if (ev == "KNOB_ROTATE") {
+            int k = knobNameToIndex(jstr(fields, "knob"));
+            std::string dir = jstr(fields, "direction");
+            if (k >= 1 && !dir.empty())
+                g_out.send(mxb::mapKnobRotate(k, dir == "CLOCKWISE"));
+        }
+    } catch (...) {
+        return 0;  // never let a malformed event crash the process
     }
     return 0;
 }
@@ -323,9 +337,9 @@ int main(int argc, char** argv) {
     // (screen 0); any control you press/turn is echoed (screen 1). Maps LED
     // indices (incl. >102 now that ledcnt is bumped) + confirms input ids.
     if (g_mapper) {
-        std::fprintf(stderr, "MAPPER: turn KNOB1 to move the lit LED (1..%d, screen 0); "
-                             "press/turn any control to see its id (screen 1). Ctrl+C to exit.\n",
-                     kMapMax);
+        std::fprintf(stderr, "MAPPER: turn KNOB9 (big encoder) to move the lit LED (1..%d, "
+                             "screen 0); press/turn any control to see its id (screen 1). "
+                             "Ctrl+C to exit.\n", kMapMax);
         int prevAddr = 0;
         for (;;) {
             rebellion_loop(INPUT_POLL_MS);
@@ -336,7 +350,7 @@ int main(int argc, char** argv) {
                 fb.text(150, 70, "LED ADDRESS", mxb::dp::DIM, 1);
                 std::string t = std::to_string(g_ledAddr);
                 fb.text((mxb::kW - mxb::textWidth(t, 6)) / 2, 100, t, mxb::dp::CYAN, 6);
-                fb.text(120, 200, "turn KNOB1 to move", mxb::dp::DIM, 1);
+                fb.text(110, 200, "turn KNOB9 to move", mxb::dp::DIM, 1);
                 sendFB(0, fb);
                 prevAddr = g_ledAddr;
                 g_addrDirty = false;
