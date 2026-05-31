@@ -148,8 +148,16 @@ int main(int argc, char** argv) {
         }
         artist = rt.artist; title = rt.title; wf = std::move(rt.waveform);
         if (rt.bpm > 0) bpm = rt.bpm;
-        std::fprintf(stderr, "loaded: %s - %s [%s] (%zu frames)\n",
-                     artist.c_str(), title.c_str(), rt.location.c_str(), wf.mono.size());
+        // Band diagnostic: -1 = band vector empty (no signal_filtered decoded);
+        // 0 = present but all-zero (decode bug); >0 = real band energy.
+        auto avg = [](const std::vector<uint8_t>& v) -> int {
+            if (v.empty()) return -1;
+            long s = 0; for (uint8_t x : v) s += x;
+            return static_cast<int>(s / static_cast<long>(v.size()));
+        };
+        std::fprintf(stderr, "loaded: %s - %s [%s] (%zu frames; bands l/m/h avg=%d/%d/%d)\n",
+                     artist.c_str(), title.c_str(), rt.location.c_str(), wf.mono.size(),
+                     avg(wf.low), avg(wf.mid), avg(wf.high));
         return true;
     });
 

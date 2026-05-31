@@ -139,15 +139,19 @@ inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d) {
             const bool played = x < playX;
 
             uint16_t body, outline;
+            bool colored = false;
             if (nb > 0) {
-                // Normalise to the dominant band so the hue reads (broadband -> white).
                 int la = ls / nb, ma = ms / nb, ha = hs / nb;
-                int mx = la; if (ma > mx) mx = ma; if (ha > mx) mx = ha; if (mx < 1) mx = 1;
-                int r = la * 255 / mx, g = ma * 255 / mx, bl = ha * 255 / mx;
-                const int bodyMul = played ? 45 : 100;          // dim played region
-                body    = rgb565(r * bodyMul / 100, g * bodyMul / 100, bl * bodyMul / 100);
-                outline = rgb565(r * 35 / 100,      g * 35 / 100,      bl * 35 / 100);
-            } else {
+                int mx = la; if (ma > mx) mx = ma; if (ha > mx) mx = ha;
+                if (mx > 0) {  // real band energy -> colour by dominant band
+                    int r = la * 255 / mx, g = ma * 255 / mx, bl = ha * 255 / mx;
+                    const int bodyMul = played ? 45 : 100;       // dim played region
+                    body    = rgb565(r * bodyMul / 100, g * bodyMul / 100, bl * bodyMul / 100);
+                    outline = rgb565(r * 35 / 100,      g * 35 / 100,      bl * 35 / 100);
+                    colored = true;
+                }
+            }
+            if (!colored) {  // no/empty band data -> single-hue cyan (never invisible)
                 body    = played ? WAVE_PLAYED : WAVE;
                 outline = played ? PLAYED      : WAVE_DIM;
             }
