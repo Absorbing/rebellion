@@ -105,12 +105,11 @@ void sendLed(int index, uint8_t color, uint8_t intensity) {
                   static_cast<uint32_t>(s.size()));
 }
 
-// Push deck-state LEDs, sending only the ones whose colour/intensity changed.
-mxb::LedLayout g_ledLayout;
-void updateLeds(mxb::DeckModel& model, int focusedDeck) {
+// Push deck-state pad LEDs, sending only the ones whose colour/intensity changed.
+void updateLeds(mxb::DeckModel& model) {
     static std::map<int, mxb::LedCmd> last;
     std::vector<mxb::LedCmd> want;
-    mxb::computeLeds(model, focusedDeck, g_ledLayout, want);
+    mxb::computeLeds(model, want);
     for (const auto& c : want) {
         if (c.index <= 0) continue;
         auto it = last.find(c.index);
@@ -332,7 +331,7 @@ int main(int argc, char** argv) {
             lastFocus = g_focusedDeck;
         }
 
-        updateLeds(model, g_focusedDeck);  // focus + transport state on the LEDs
+        updateLeds(model);  // deck state on the RGB pads (deck1=1-8, deck2=9-16)
 
         // Redraw any deck whose state changed, throttled. (Full-frame overview
         // pushes are heavy; SPEC §4.4 diff-regions is the later optimisation.)

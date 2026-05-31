@@ -1,23 +1,25 @@
-// Mixxx Studio Bridge — deck state -> button LED feedback.
+// Mixxx Studio Bridge — deck state -> pad LED feedback.
 //
-// Drives the Studio's button LEDs from the DeckState we already track, via
-// rebellion's sendLedData (host passes a raw LED array index 1..ledcnt). The
-// Studio LED indices in rebellion's mappings.lua are placeholders (a v0.0 trial
-// config), so the index layout below is a best guess — confirm with the LED
-// probe (run studio_bridge with MXB_LED_PROBE=1) and adjust `LedLayout`.
+// Drives the Studio's 16 RGB pads from DeckState (deck 1 = pads 1-8, deck 2 =
+// pads 9-16). The transport/GROUP button LEDs aren't addressable within the
+// device's ledcnt (see studio_leds.hpp), so deck feedback lives on the pads —
+// which is also where hotcue/sampler colouring will go. Focus is shown on-screen
+// (the cyan deck border), not on LEDs.
+//
+// Each pad colour is three single-channel writes (R/G/B indices). A channel is
+// lit with color=WHITE + intensity, off with color=OFF.
 
 #pragma once
 #include <cstdint>
 #include <vector>
 
 #include "deck_state.hpp"
+#include "studio_leds.hpp"
 
 namespace mxb {
 
-// niproto colour codes (scripts/niproto.lua). intensity is 0..3 (off..bright).
-namespace ledcolor {
-constexpr uint8_t OFF = 0, RED = 1, ORANGE = 2, YELLOW = 5, GREEN = 7,
-                  CYAN = 9, BLUE = 11, PURPLE = 14, WHITE = 17;
+namespace ledcolor {  // niproto colour codes (only WHITE/OFF needed for channels)
+constexpr uint8_t OFF = 0, WHITE = 17;
 }
 
 struct LedCmd {
@@ -29,46 +31,32 @@ struct LedCmd {
     }
 };
 
-// Which LED index belongs to which control. Indices are unconfirmed for the
-// Studio (placeholders in mappings.lua) — verify on hardware with MXB_LED_PROBE
-// and edit here. Defaults guess index = button id.
-struct LedLayout {
-    int groupA = 16;   // deck 1 focus indicator (GROUP_A button)
-    int groupB = 19;   // deck 2 focus indicator (GROUP_B button)
-    int play   = 29;   // PLAY button  (reflects focused deck)
-    int cue    = 28;   // RESTART button used as CUE
-    int sync   = 27;   // GRID button used as SYNC
-};
+// RGB intensities (0..3) for a pad reflecting one deck's state:
+//   playing -> green ; loaded+stopped -> blue (dim) ; empty -> off.
+inline void padColorFor(const DeckState& d, uint8_t& r, uint8_t& g, uint8_t& b) {
+    r = g = b = 0;
+    if (!d.loaded) return;
+    if (d.playing) g = 3;        // green, bright
+    else           b = 1;        // blue, dim (loaded, stopped)
+}
 
-// Compute LED commands for the deck-focus model:
-//   GROUP_A/B : focused deck -> CYAN bright; other deck loaded -> BLUE dim; else off
-//   PLAY      : focused deck playing -> GREEN bright; loaded -> GREEN dim; else off
-//   CUE       : focused deck loaded -> WHITE dim
-//   SYNC      : focused deck sync on -> BLUE bright; loaded -> BLUE dim; else off
-inline void computeLeds(const DeckModel& m, int focusedDeck, const LedLayout& L,
-                        std::vector<LedCmd>& out) {
+// Build pad LED commands for both decks.
+inline void computeLeds(const DeckModel& m, std::vector<LedCmd>& out) {
     out.clear();
-    auto focusInd = [&](int idx, int deck) {
-        LedCmd c{idx, ledcolor::OFF, 0};
-        if (focusedDeck == deck)      { c.color = ledcolor::CYAN; c.intensity = 3; }
-        else if (m.deck(deck).loaded) { c.color = ledcolor::BLUE; c.intensity = 1; }
-        out.push_back(c);
+    auto chan = [&](int idx, uint8_t inten) {
+        out.push_back({idx, static_cast<uint8_t>(inten ? ledcolor::WHITE : ledcolor::OFF),
+                       inten});
     };
-    focusInd(L.groupA, 1);
-    focusInd(L.groupB, 2);
-
-    const DeckState& f = m.deck(focusedDeck);
-    LedCmd play{L.play, ledcolor::OFF, 0};
-    if (f.loaded) { play.color = ledcolor::GREEN; play.intensity = f.playing ? 3 : 1; }
-    out.push_back(play);
-
-    out.push_back({L.cue, static_cast<uint8_t>(f.loaded ? ledcolor::WHITE : ledcolor::OFF),
-                   static_cast<uint8_t>(f.loaded ? 1 : 0)});
-
-    LedCmd sync{L.sync, ledcolor::OFF, 0};
-    if (f.sync)        { sync.color = ledcolor::BLUE; sync.intensity = 3; }
-    else if (f.loaded) { sync.color = ledcolor::BLUE; sync.intensity = 1; }
-    out.push_back(sync);
+    auto deckPads = [&](int firstPad, const DeckState& d) {
+        uint8_t r, g, b; padColorFor(d, r, g, b);
+        for (int p = firstPad; p < firstPad + 8; ++p) {
+            chan(studioled::padRGB(p, 0), r);
+            chan(studioled::padRGB(p, 1), g);
+            chan(studioled::padRGB(p, 2), b);
+        }
+    };
+    deckPads(1, m.deck(1));   // pads 1-8  = deck 1
+    deckPads(9, m.deck(2));   // pads 9-16 = deck 2
 }
 
 }  // namespace mxb
