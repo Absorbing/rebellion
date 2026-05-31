@@ -67,10 +67,12 @@ int g_focusedDeck = 1;
 // 1. Lets us map LED indices >102 and confirm input ids without overshoot.
 bool        g_mapper    = false;
 int         g_ledAddr   = 1;
+int         g_knobAccum = 0;     // KNOB9 sends several ticks/detent; divide them down
 bool        g_addrDirty = true;
 std::string g_lastInput = "(press / turn a control)";
 bool        g_inputDirty = true;
-constexpr int kMapMax = 300;   // must match the Studio ledcnt in mappings.lua
+constexpr int kMapMax  = 300;    // must match the Studio ledcnt in mappings.lua
+constexpr int kKnobDiv = 4;      // KNOB9 ticks per one LED-address step
 
 int knobNameToIndex(const std::string& name) {  // "KNOB1".."KNOB8" -> 1..8, else 0
     if (name.size() == 5 && name.compare(0, 4, "KNOB") == 0 &&
@@ -179,11 +181,12 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
         if (g_mapper) {
             if (ev == "KNOB_ROTATE") {
                 std::string knob = jstr(fields, "knob"), dir = jstr(fields, "direction");
-                if (knob == "KNOB9") {  // big nav encoder scrubs the LED address (+/-1)
-                    g_ledAddr += (dir == "CLOCKWISE") ? 1 : -1;
+                if (knob == "KNOB9") {  // big nav encoder scrubs the LED address
+                    g_knobAccum += (dir == "CLOCKWISE") ? 1 : -1;
+                    while (g_knobAccum >= kKnobDiv)  { g_ledAddr++; g_knobAccum -= kKnobDiv; g_addrDirty = true; }
+                    while (g_knobAccum <= -kKnobDiv) { g_ledAddr--; g_knobAccum += kKnobDiv; g_addrDirty = true; }
                     if (g_ledAddr < 1) g_ledAddr = 1;
                     if (g_ledAddr > kMapMax) g_ledAddr = kMapMax;
-                    g_addrDirty = true;
                 }
                 g_lastInput = "KNOB " + knob + " " + dir;
             } else if (ev == "BTN_DATA") {
