@@ -127,6 +127,13 @@ add_executable(mxb_control_map_tests
 target_link_libraries(mxb_control_map_tests PRIVATE mxb_mixxx_bridge)
 add_test(NAME mxb_control_map_tests COMMAND mxb_control_map_tests)
 
+# LED feedback (deck state -> button LEDs) unit tests.
+add_executable(mxb_led_map_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/test_led_map.cpp
+)
+target_link_libraries(mxb_led_map_tests PRIVATE mxb_mixxx_bridge)
+add_test(NAME mxb_led_map_tests COMMAND mxb_led_map_tests)
+
 # Deck-panel render smoke test (no device).
 add_executable(mxb_deck_panel_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/studio-bridge/test_deck_panel.cpp

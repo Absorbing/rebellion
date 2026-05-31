@@ -40,6 +40,7 @@ extern "C" {
 #include "track_resolver.hpp"
 #include "control_map.hpp"
 #include "midi_out.hpp"
+#include "led_map.hpp"
 
 namespace {
 
@@ -86,6 +87,34 @@ void sendFB(int display, const mxb::Framebuffer& fb) {
     rebellion_rpc(REBELLION_MF_JSON, REBELLION_MT_REQ,
                   reinterpret_cast<const uint8_t*>(s.c_str()),
                   static_cast<uint32_t>(s.size()));
+}
+
+// Set one button/pad LED (rebellion.sendLedData: serial, index, color, intensity).
+void sendLed(int index, uint8_t color, uint8_t intensity) {
+    if (g_serial.empty() || index <= 0) return;
+    json req = {{"method", "rebellion.sendLedData"},
+                {"params", json::array({g_serial, index, color, intensity})},
+                {"id", 1000 + index}};
+    const std::string s = req.dump();
+    rebellion_rpc(REBELLION_MF_JSON, REBELLION_MT_REQ,
+                  reinterpret_cast<const uint8_t*>(s.c_str()),
+                  static_cast<uint32_t>(s.size()));
+}
+
+// Push deck-state LEDs, sending only the ones whose colour/intensity changed.
+mxb::LedLayout g_ledLayout;
+void updateLeds(mxb::DeckModel& model) {
+    static std::map<int, mxb::LedCmd> last;
+    std::vector<mxb::LedCmd> want;
+    mxb::computeDeckLeds(model, g_ledLayout, want);
+    for (const auto& c : want) {
+        if (c.index <= 0) continue;
+        auto it = last.find(c.index);
+        if (it == last.end() || !(it->second == c)) {
+            sendLed(c.index, c.color, c.intensity);
+            last[c.index] = c;
+        }
+    }
 }
 
 void pump(int ms) { for (int e = 0; e < ms; e += SLICE_MS) rebellion_loop(SLICE_MS); }
@@ -239,6 +268,33 @@ int main(int argc, char** argv) {
         mxb::Framebuffer fb; renderSplash(fb, kDeckForDisplay[disp]); sendFB(disp, fb);
     }
 
+    // LED probe (MXB_LED_PROBE=1): cycle every LED index, showing the number on
+    // the screen, so the real button->index map can be read off the hardware.
+    // The Studio LED indices in mappings.lua are placeholders; this confirms them.
+    if (std::getenv("MXB_LED_PROBE")) {
+        constexpr int kLedCnt = 103;   // Studio ledcnt (mappings.lua)
+        std::fprintf(stderr, "LED PROBE: cycling indices 1..%d (~500ms each). "
+                             "Note which button/pad lights at each number.\n", kLedCnt);
+        int idx = 1, prev = 0;
+        auto last = std::chrono::steady_clock::now();
+        for (;;) {
+            rebellion_loop(INPUT_POLL_MS);
+            if (msSince(last) >= 500) {
+                if (prev > 0) sendLed(prev, mxb::ledcolor::OFF, 0);
+                sendLed(idx, mxb::ledcolor::WHITE, 3);
+                for (int disp = 0; disp < 2; ++disp) {
+                    mxb::Framebuffer fb; fb.clear(mxb::dp::BG);
+                    std::string t = "LED " + std::to_string(idx);
+                    fb.text((mxb::kW - mxb::textWidth(t, 4)) / 2, 110, t, mxb::dp::CYAN, 4);
+                    sendFB(disp, fb);
+                }
+                prev = idx;
+                if (++idx > kLedCnt) idx = 1;
+                last = std::chrono::steady_clock::now();
+            }
+        }
+    }
+
     std::fprintf(stderr, "ready: display 0 = Deck A, display 1 = Deck B. "
                          "Load tracks in Mixxx. Ctrl+C to exit.\n");
 
@@ -253,6 +309,7 @@ int main(int argc, char** argv) {
             batch.swap(g_evQueue);
         }
         for (const auto& e : batch) model.apply(e);
+        updateLeds(model);  // reflect deck play/cue state on the button LEDs
 
         // Redraw any deck whose state changed, throttled. (Full-frame overview
         // pushes are heavy; SPEC §4.4 diff-regions is the later optimisation.)
