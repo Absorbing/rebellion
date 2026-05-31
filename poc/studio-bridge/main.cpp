@@ -70,7 +70,7 @@ int         g_ledAddr   = 1;
 bool        g_addrDirty = true;
 std::string g_lastInput = "(press / turn a control)";
 bool        g_inputDirty = true;
-constexpr int kMapMax = 200;   // must match the Studio ledcnt in mappings.lua
+constexpr int kMapMax = 300;   // must match the Studio ledcnt in mappings.lua
 
 int knobNameToIndex(const std::string& name) {  // "KNOB1".."KNOB8" -> 1..8, else 0
     if (name.size() == 5 && name.compare(0, 4, "KNOB") == 0 &&
