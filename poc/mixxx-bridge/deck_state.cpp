@@ -12,8 +12,19 @@ void DeckModel::apply(const BridgeEvent& e) {
     if (n < 1 || n > 4) return;
     DeckState& d = decks_[n];
 
+    // Only repaint when something actually changes — the Mixxx script streams
+    // position at 20Hz and re-sends transport state on a 2s heartbeat, so
+    // unconditional dirtying would repaint constantly (and flicker while paused).
+    auto setB = [&](bool& f, bool v)   { if (f != v) { f = v; d.dirty = true; } };
+    auto setD = [&](double& f, double v) { if (f != v) { f = v; d.dirty = true; } };
+
     switch (e.type) {
         case BridgeEventType::TrackIdentity: {
+            // The heartbeat re-sends identity for the loaded track; if it's the
+            // same track we already resolved, do nothing — no re-decode, no
+            // position reset, no repaint. Only a genuinely new track reloads.
+            if (d.loaded && d.hasWaveform && d.fp == e.fp) break;
+
             d.fp = e.fp;
             d.loaded = true;
             d.hasWaveform = false;
@@ -40,15 +51,15 @@ void DeckModel::apply(const BridgeEvent& e) {
         case BridgeEventType::TrackCleared:
             d = DeckState{};        // reset, leaves dirty = true
             break;
-        case BridgeEventType::Play:         d.playing = e.value != 0.0; d.dirty = true; break;
-        case BridgeEventType::TrackLoaded:  d.loaded  = e.value != 0.0; d.dirty = true; break;
-        case BridgeEventType::SyncEnabled:  d.sync    = e.value != 0.0; d.dirty = true; break;
-        case BridgeEventType::Keylock:      d.keylock = e.value != 0.0; d.dirty = true; break;
-        case BridgeEventType::LoopEnabled:  d.loop    = e.value != 0.0; d.dirty = true; break;
-        case BridgeEventType::Bpm:          d.bpm     = e.value; d.dirty = true; break;
-        case BridgeEventType::Rate:         d.rate    = e.value; d.dirty = true; break;
-        case BridgeEventType::PlayPosition: d.position = e.value; d.dirty = true; break;
-        case BridgeEventType::VuMeter:      d.vu      = e.value; d.dirty = true; break;
+        case BridgeEventType::Play:         setB(d.playing, e.value != 0.0); break;
+        case BridgeEventType::TrackLoaded:  setB(d.loaded,  e.value != 0.0); break;
+        case BridgeEventType::SyncEnabled:  setB(d.sync,    e.value != 0.0); break;
+        case BridgeEventType::Keylock:      setB(d.keylock, e.value != 0.0); break;
+        case BridgeEventType::LoopEnabled:  setB(d.loop,    e.value != 0.0); break;
+        case BridgeEventType::Bpm:          setD(d.bpm,      e.value); break;
+        case BridgeEventType::Rate:         setD(d.rate,     e.value); break;
+        case BridgeEventType::PlayPosition: setD(d.position, e.value); break;  // no change while paused -> no repaint
+        case BridgeEventType::VuMeter:      setD(d.vu,       e.value); break;
         default: break;  // hotcues / cue indicator: tracked when those widgets land
     }
 }

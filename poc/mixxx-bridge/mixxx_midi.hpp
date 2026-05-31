@@ -50,6 +50,11 @@ struct TrackFingerprint {
     uint32_t durationMs = 0;  // [ChannelN],duration * 1000
     uint16_t bpmCenti   = 0;  // [ChannelN],file_bpm * 100
     bool empty() const { return samples == 0 && samplerate == 0; }
+    bool operator==(const TrackFingerprint& o) const {
+        return samples == o.samples && samplerate == o.samplerate &&
+               durationMs == o.durationMs && bpmCenti == o.bpmCenti;
+    }
+    bool operator!=(const TrackFingerprint& o) const { return !(*this == o); }
 };
 
 // MIDI channel role (SPEC §3.3.1). 1-indexed channels map to these.

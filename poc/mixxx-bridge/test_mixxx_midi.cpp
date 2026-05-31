@@ -154,6 +154,21 @@ int main() {
         CHECK(d1.playing, "deck1 playing after play-on");
         CHECK(d1.waveform.mono.size() == 1000, "deck1 waveform frames");
 
+        // Heartbeat: the same identity re-sent must NOT reload, reset position,
+        // or force a repaint (this was the every-2s jump-to-start bug).
+        model.deck(1).position = 0.42;
+        model.deck(1).dirty = false;
+        dec.onMessage(encodeIdSysex(1, fp));
+        CHECK(loaderCalls == 1, "heartbeat (same fp) does not reload");
+        CHECK(d1.position == 0.42, "heartbeat does not reset position");
+        CHECK(!d1.dirty, "heartbeat (same fp) does not force a repaint");
+
+        // A genuinely different track does reload and resets position.
+        TrackFingerprint fp2{9000000, 44100, 200000, 13000};
+        dec.onMessage(encodeIdSysex(1, fp2));
+        CHECK(loaderCalls == 2, "new fingerprint reloads");
+        CHECK(d1.position == 0.0, "new track resets position");
+
         // clear: F0 7D 02 <deck> F7
         dec.onMessage({0xF0, 0x7D, 0x02, 0x01, 0xF7});
         CHECK(!model.deck(1).loaded, "deck1 cleared");
