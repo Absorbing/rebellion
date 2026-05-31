@@ -57,9 +57,9 @@ the Windows rig (untestable off-device), so it's deliberately not stubbed blind.
 | File | Role | Tested off-device |
 |---|---|---|
 | `mixxx_midi.{hpp,cpp}` | Decode MIDI + SysEx → `BridgeEvent`; unpack identity fingerprint | ✅ `test_mixxx_midi.cpp` |
-| `track_resolver.{hpp,cpp}` | fingerprint → `library.id` → analysis blob → `Waveform` | ⬜ needs a real `mixxxdb.sqlite` |
+| `track_resolver.{hpp,cpp}` | fingerprint → `library.id` → analysis blob → `Waveform` | ✅ matched real `mixxxdb.sqlite` on hardware (2026-05-31) |
 | `deck_state.{hpp,cpp}` | fold events into per-deck state; trigger track load | ✅ |
-| `mixxx_listener.{hpp,cpp}` | RtMidi virtual-port input shell | ⬜ needs loopMIDI (Windows) |
+| `mixxx_listener.{hpp,cpp}` | RtMidi virtual-port input shell | ✅ live loopMIDI in on hardware (2026-05-31) |
 | `test_mixxx_midi.cpp` | unit tests (incl. the §3.4 worked SysEx example) | ✅ |
 
 ## What's verified
@@ -77,12 +77,18 @@ the Windows rig (untestable off-device), so it's deliberately not stubbed blind.
 - **Deck model** — a track-identity SysEx invokes the loader once with the
   fingerprint and lands a waveform; play folds in; a clear (0x02) resets the deck.
 
-## What still needs hardware / a real machine
+## Confirmed end-to-end on hardware (2026-05-31)
 
-- `track_resolver` against a real `mixxxdb.sqlite`: confirm the fingerprint
-  matches **uniquely** (duration float precision, no collisions in this library).
-- The `.scripts.js` emitter actually populating `track_samples`/`duration` when
-  `track_loaded` fires, over a real loopMIDI port into `MixxxListener`.
+Loading a track in Mixxx paints the Studio deck screen — the full inbound chain
+live: loopMIDI in → SysEx fingerprint decode → `mixxxdb.sqlite` match → waveform
+decode → both-screen render. The fingerprint identity (our pivot from the absent
+`file_path`) matched a real library row first try. Maschine Studio serial
+26C67082, loopMIDI port `Mixxx-State`.
+
+**Known issue (open):** the rendered waveform is not correct (shape/scale) even
+though the track resolves and metadata is right — under investigation. Likely in
+`deck_panel` full-track overview mapping or the detailed-vs-overview blob choice,
+not the decode (which is independently verified by `waveform-inspect`).
 
 ## Build & test
 
