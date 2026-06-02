@@ -43,7 +43,7 @@
 
       <!-- The bridge reserves ONLY the library controls above. Every other Studio
            control is forwarded raw on note = button id (ch1), pad id (ch2), or a
-           relative CC for knobs -- so map them here or via the Learning Wizard.
+           relative CC for knobs, so map them here or via the Learning Wizard.
            e.g. PLAY=0x1D(29) REC=0x1E(30) RESTART=0x1C(28) GRID=0x1B(27)
                 GROUP A-H = 0x10/0x13/0x14/0x17/0x11/0x12/0x15/0x16
            Starter raw bindings (edit freely): -->
