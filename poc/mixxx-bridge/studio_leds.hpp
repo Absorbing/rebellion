@@ -1,57 +1,95 @@
-// Mixxx Studio Bridge — Maschine Studio LED index map.
+// Mixxx Studio Bridge — Maschine Studio LED + button-id map.
 //
-// Reverse-engineered on hardware via the probe (MXB_LED_PROBE), since rebellion's
-// mappings.lua LED indices for the Studio were placeholders. Indices are 1-based,
-// as passed to rebellion.sendLedData(serial, index, color, intensity).
+// Reverse-engineered on hardware via the interactive mapper (MXB_LED_PROBE).
+// LED indices are 1-based, as passed to rebellion.sendLedData(serial, index,
+// color, intensity). RGB controls use three consecutive indices (R, G, B); set
+// a channel with color=WHITE + intensity 1..3, off with color=OFF.
 //
-//   1..24   pads 1-8, RGB triples   (pad p: R=1+(p-1)*3, G=R+1, B=R+2)
-//   25..32  pads 1-8, white         (pad p: 25+(p-1))
-//   33..40  top row (white), left->right
-//   41 CHANNEL/MIDI  42 PLUGIN  43 ARRANGE  44 MIX  45 BROWSE  46 SAMPLING
-//   47 left-arrow    48 right-arrow
-//   49 ALL           50 AUTO
-//   51..54  (no visible output)
-//   55..58  IN 1-4
-//   59 MST  60 GRP  61 SND  62 CUE
-//   63..86  pads 9-16, RGB triples  (pad p: R=63+(p-9)*3, G=R+1, B=R+2)
-//   87..94  pads 9-16, white        (pad p: 87+(p-9))
+//   LED INDEX MAP
+//   1..24    pads 1-8  RGB   (pad p: R=1+(p-1)*3, G,B)
+//   25..32   pads 1-8  white
+//   33..40   top row (white), left->right
+//   41 CHANNEL 42 PLUGIN 43 ARRANGE 44 MIX 45 BROWSE 46 SAMPLING 47 < 48 >
+//   49 ALL 50 AUTO
+//   51..54   (no visible output)
+//   55..58   IN 1-4
+//   59 MST 60 GRP 61 SND 62 CUE
+//   63..86   pads 9-16 RGB   (pad p: R=63+(p-9)*3, G,B)
+//   87..94   pads 9-16 white
 //   95 COPY 96 PASTE 97 NOTE 98 NUDGE 99 UNDO 100 REDO 101 QUANTIZE 102 CLEAR
-//   103     display-related
+//   103 BACK(btn55) 104 <(btn54) 105 >(btn53) 106 ENTER(btn52)
+//   107..130 GROUP A-H RGB  (group g=1..8: R=107+(g-1)*3, G,B)
+//   131..138 GROUP A-H white
+//   139 TAP 140 STEP 141 MACRO 142 NOTE_REPEAT 143 RESTART 144 METRO
+//   145 EVENTS 146 GRID 147 PLAY 148 REC 149 ERASE 150 SHIFT
+//   151..158 btn ids 35,34,33,32,39,38,37,36 (left function column)
+//   159..174 peak meter LEFT  (174 = top)
+//   175..190 peak meter RIGHT (190 = top)
+//   191..192 (unmapped)
+//   193 EDIT 194 CHANNEL 195 BROWSE 196 TUNE 197 SWING 198 VOLUME  (around jog)
+//   199..213 jog ring (left->right)
 //
-// NOT addressable within 1..103: the transport row (PLAY/REC/RESTART/...),
-// GROUP A-H, and knob LEDs. They live beyond ledcnt (=103) or aren't exposed
-// this way — reaching them needs a larger ledcnt + a re-probe. So LED feedback
-// uses the 16 RGB pads (which is the surface we want for hotcues/samplers).
+//   BUTTON IDS (BTN_DATA buttonid; from mappings.lua + probe)
+//   PLAY 29  REC 30  RESTART 28  GRID 27  METRO 31  EVENTS 24  ERASE 25
+//   SHIFT 26  NOTE_REPEAT 11  STEP 9  MACRO 10  (TAP id: TBD)
+//   GROUP_A 16 B 19 C 20 D 23 E 17 F 18 G 21 H 22
+//   BACK 55  NAV_< 54  NAV_> 53  ENTER 52
+//   KNOB1-8 touch 88..95 ; KNOB9 = big nav encoder (rotate only)
+//   left function column btn ids 32..39 (names TBD)
 
 #pragma once
 
 namespace mxb {
 namespace studioled {
 
-// Per-pad RGB channel index. pad = 1..16, ch = 0(R)/1(G)/2(B). 0 if out of range.
-inline int padRGB(int pad, int ch) {
+// --- RGB / white element index helpers --------------------------------------
+inline int padRGB(int pad, int ch) {           // pad 1..16, ch 0=R/1=G/2=B
     if (pad >= 1 && pad <= 8)  return 1  + (pad - 1) * 3 + ch;
     if (pad >= 9 && pad <= 16) return 63 + (pad - 9) * 3 + ch;
     return 0;
 }
-
-// Per-pad single white LED index. pad = 1..16. 0 if out of range.
 inline int padWhite(int pad) {
     if (pad >= 1 && pad <= 8)  return 25 + (pad - 1);
     if (pad >= 9 && pad <= 16) return 87 + (pad - 9);
     return 0;
 }
+inline int groupRGB(int group, int ch) {        // group 1..8 (A..H), ch 0/1/2
+    if (group >= 1 && group <= 8) return 107 + (group - 1) * 3 + ch;
+    return 0;
+}
+inline int groupWhite(int group) {
+    if (group >= 1 && group <= 8) return 131 + (group - 1);
+    return 0;
+}
+inline int peakLeft(int i)  { return (i >= 0 && i < 16) ? 159 + i : 0; }  // 0=bottom
+inline int peakRight(int i) { return (i >= 0 && i < 16) ? 175 + i : 0; }
+inline int jogRing(int i)   { return (i >= 0 && i < 15) ? 199 + i : 0; }
 
-// Named section-button LED indices (white).
-constexpr int CHANNEL = 41, PLUGIN = 42, ARRANGE = 43, MIX = 44,
-              BROWSE = 45, SAMPLING = 46, ARROW_L = 47, ARROW_R = 48,
-              ALL = 49, AUTO = 50,
-              IN1 = 55, IN2 = 56, IN3 = 57, IN4 = 58,
-              MST = 59, GRP = 60, SND = 61, CUE = 62,
-              COPY = 95, PASTE = 96, NOTE = 97, NUDGE = 98,
-              UNDO = 99, REDO = 100, QUANTIZE = 101, CLEAR = 102;
+// --- single-LED indices ------------------------------------------------------
+constexpr int CHANNEL = 41, PLUGIN = 42, ARRANGE = 43, MIX = 44, BROWSE = 45,
+              SAMPLING = 46, NAV_PREV = 47, NAV_NEXT = 48, ALL = 49, AUTO = 50,
+              IN1 = 55, IN2 = 56, IN3 = 57, IN4 = 58, MST = 59, GRP = 60,
+              SND = 61, CUE = 62,
+              COPY = 95, PASTE = 96, NOTE = 97, NUDGE = 98, UNDO = 99,
+              REDO = 100, QUANTIZE = 101, CLEAR = 102,
+              BACK = 103, ARROW_L = 104, ARROW_R = 105, ENTER = 106,
+              TAP = 139, STEP = 140, MACRO = 141, NOTE_REPEAT = 142,
+              RESTART = 143, METRO = 144, EVENTS = 145, GRID = 146,
+              PLAY = 147, REC = 148, ERASE = 149, SHIFT = 150,
+              JOG_EDIT = 193, JOG_CHANNEL = 194, JOG_BROWSE = 195,
+              JOG_TUNE = 196, JOG_SWING = 197, JOG_VOLUME = 198;
 
-constexpr int LEDCNT = 103;  // mappings.lua Studio ledcnt
+// --- button ids (BTN_DATA buttonid) ------------------------------------------
+namespace btn {
+constexpr int PLAY = 29, REC = 30, RESTART = 28, GRID = 27, METRO = 31,
+              EVENTS = 24, ERASE = 25, SHIFT = 26, NOTE_REPEAT = 11,
+              STEP = 9, MACRO = 10,
+              GROUP_A = 16, GROUP_B = 19, GROUP_C = 20, GROUP_D = 23,
+              GROUP_E = 17, GROUP_F = 18, GROUP_G = 21, GROUP_H = 22,
+              BACK = 55, NAV_PREV = 54, NAV_NEXT = 53, ENTER = 52;
+}
+
+constexpr int LEDCNT = 300;  // mappings.lua Studio ledcnt
 
 }  // namespace studioled
 }  // namespace mxb

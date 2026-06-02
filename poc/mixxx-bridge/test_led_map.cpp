@@ -18,15 +18,17 @@ int main() {
         return LedCmd{-1, 99, 99};
     };
 
-    // Empty decks -> every pad channel off (16 pads x 3 channels = 48 commands).
-    computeLeds(model, cmds);
-    CHECK(cmds.size() == 48, "48 pad-channel commands");
-    for (auto& c : cmds) CHECK(c.intensity == 0 && c.color == ledcolor::OFF, "empty -> off");
+    // Empty decks, focus deck 1: pads off; GROUP A cyan (focused); PLAY off.
+    computeLeds(model, 1, cmds);
+    CHECK(find(studioled::padRGB(1, 1)).intensity == 0, "empty pad off");
+    CHECK(find(studioled::groupRGB(1, 1)).intensity == 3 &&
+          find(studioled::groupRGB(1, 2)).intensity == 3, "GROUP A focused -> cyan (G+B)");
+    CHECK(find(studioled::PLAY).intensity == 0, "PLAY off when focused deck empty");
 
     // Deck 1 playing (pads 1-8 green), deck 2 loaded+stopped (pads 9-16 blue dim).
     model.deck(1).loaded = true; model.deck(1).playing = true;
     model.deck(2).loaded = true; model.deck(2).playing = false;
-    computeLeds(model, cmds);
+    computeLeds(model, 1, cmds);
 
     // pad 1 (deck1): R off, G bright, B off.
     CHECK(find(studioled::padRGB(1, 0)).intensity == 0, "pad1 R off");
@@ -41,10 +43,23 @@ int main() {
     CHECK(find(studioled::padRGB(9, 2)).intensity == 1, "pad9 B dim (loaded,stopped=blue)");
     CHECK(find(studioled::padRGB(16, 2)).intensity == 1, "pad16 B dim (deck2)");
 
+    // Focused deck 1 transport LEDs (PLAY bright, SYNC dim since not synced).
+    CHECK(find(studioled::PLAY).intensity == 3, "PLAY bright (focused deck playing)");
+    CHECK(find(studioled::RESTART).intensity == 1, "CUE(RESTART) dim (focused loaded)");
+    // GROUP B unfocused+loaded -> blue dim.
+    CHECK(find(studioled::groupRGB(2, 2)).intensity == 1, "GROUP B unfocused loaded -> blue dim");
+
+    // Switch focus to deck 2 -> GROUP B cyan, PLAY reflects deck 2 (loaded, stopped).
+    computeLeds(model, 2, cmds);
+    CHECK(find(studioled::groupRGB(2, 1)).intensity == 3, "GROUP B focused -> cyan");
+    CHECK(find(studioled::PLAY).intensity == 1, "PLAY dim (focused deck2 loaded, stopped)");
+
     // Index sanity from the probed map.
     CHECK(studioled::padRGB(1, 0) == 1 && studioled::padRGB(8, 2) == 24, "pads 1-8 at 1..24");
     CHECK(studioled::padRGB(9, 0) == 63 && studioled::padRGB(16, 2) == 86, "pads 9-16 at 63..86");
-    CHECK(studioled::padWhite(1) == 25 && studioled::padWhite(16) == 94, "pad whites 25/94");
+    CHECK(studioled::groupRGB(1, 0) == 107 && studioled::groupRGB(8, 2) == 130, "groups A-H at 107..130");
+    CHECK(studioled::PLAY == 147 && studioled::peakLeft(15) == 174 && studioled::peakRight(0) == 175,
+          "named/peak indices");
 
     if (g_fail == 0) std::printf("ALL LED-MAP TESTS PASSED\n");
     else             std::printf("%d CHECK(S) FAILED\n", g_fail);

@@ -31,7 +31,7 @@ struct LedCmd {
     }
 };
 
-// RGB intensities (0..3) for a pad reflecting one deck's state:
+// RGB intensities (0..3) for one deck's pad colour:
 //   playing -> green ; loaded+stopped -> blue (dim) ; empty -> off.
 inline void padColorFor(const DeckState& d, uint8_t& r, uint8_t& g, uint8_t& b) {
     r = g = b = 0;
@@ -40,23 +40,46 @@ inline void padColorFor(const DeckState& d, uint8_t& r, uint8_t& g, uint8_t& b) 
     else           b = 1;        // blue, dim (loaded, stopped)
 }
 
-// Build pad LED commands for both decks.
-inline void computeLeds(const DeckModel& m, std::vector<LedCmd>& out) {
+// Build LED commands from deck state. Now that the upper LED bank is mapped:
+//   pads 1-8/9-16 : deck 1/2 colour (playing green, loaded blue dim)
+//   GROUP A/B     : focused deck -> cyan ; loaded+unfocused -> blue dim ; off
+//   PLAY          : focused deck playing -> bright, loaded -> dim, else off
+//   RESTART (cue) : focused deck loaded -> dim
+//   GRID (sync)   : focused deck sync on -> bright, loaded -> dim
+inline void computeLeds(const DeckModel& m, int focusedDeck, std::vector<LedCmd>& out) {
     out.clear();
     auto chan = [&](int idx, uint8_t inten) {
-        out.push_back({idx, static_cast<uint8_t>(inten ? ledcolor::WHITE : ledcolor::OFF),
-                       inten});
+        if (idx > 0)
+            out.push_back({idx, static_cast<uint8_t>(inten ? ledcolor::WHITE : ledcolor::OFF),
+                           inten});
     };
-    auto deckPads = [&](int firstPad, const DeckState& d) {
-        uint8_t r, g, b; padColorFor(d, r, g, b);
-        for (int p = firstPad; p < firstPad + 8; ++p) {
-            chan(studioled::padRGB(p, 0), r);
-            chan(studioled::padRGB(p, 1), g);
-            chan(studioled::padRGB(p, 2), b);
-        }
+    auto rgbUnit = [&](int rI, int gI, int bI, uint8_t r, uint8_t g, uint8_t b) {
+        chan(rI, r); chan(gI, g); chan(bI, b);
     };
-    deckPads(1, m.deck(1));   // pads 1-8  = deck 1
-    deckPads(9, m.deck(2));   // pads 9-16 = deck 2
+
+    // Pads: deck 1 = 1-8, deck 2 = 9-16.
+    for (int deck = 1; deck <= 2; ++deck) {
+        uint8_t r, g, b; padColorFor(m.deck(deck), r, g, b);
+        int first = (deck == 1) ? 1 : 9;
+        for (int p = first; p < first + 8; ++p)
+            rgbUnit(studioled::padRGB(p, 0), studioled::padRGB(p, 1), studioled::padRGB(p, 2),
+                    r, g, b);
+    }
+
+    // GROUP A/B = deck 1/2 focus + load indicator.
+    for (int deck = 1; deck <= 2; ++deck) {
+        uint8_t r = 0, g = 0, b = 0;
+        if (focusedDeck == deck)         { g = 3; b = 3; }   // cyan = focused
+        else if (m.deck(deck).loaded)    { b = 1; }          // blue dim = loaded, unfocused
+        rgbUnit(studioled::groupRGB(deck, 0), studioled::groupRGB(deck, 1),
+                studioled::groupRGB(deck, 2), r, g, b);
+    }
+
+    // Transport reflects the focused deck (matches the input routing).
+    const DeckState& f = m.deck(focusedDeck);
+    chan(studioled::PLAY,    f.loaded ? (f.playing ? 3 : 1) : 0);
+    chan(studioled::RESTART, f.loaded ? 1 : 0);              // CUE
+    chan(studioled::GRID,    f.sync ? 3 : (f.loaded ? 1 : 0)); // SYNC
 }
 
 }  // namespace mxb
