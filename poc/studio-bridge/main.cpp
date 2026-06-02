@@ -337,9 +337,9 @@ int main(int argc, char** argv) {
             long s = 0; for (uint8_t x : v) s += x;
             return static_cast<int>(s / static_cast<long>(v.size()));
         };
-        std::fprintf(stderr, "loaded: %s - %s [%s] (%zu frames; bands l/m/h avg=%d/%d/%d)\n",
+        std::fprintf(stderr, "loaded: %s - %s [%s] (%zu frames; bands l/m/h=%d/%d/%d; %zu hotcues)\n",
                      artist.c_str(), title.c_str(), rt.location.c_str(), wf.mono.size(),
-                     avg(wf.low), avg(wf.mid), avg(wf.high));
+                     avg(wf.low), avg(wf.mid), avg(wf.high), hotcues.size());
         return true;
     });
 
