@@ -15,12 +15,14 @@
 var StudioBridge = {};
 
 StudioBridge.DECKS = 4;            // probe up to 4 decks; skip ones that don't exist
+StudioBridge.HOTCUES = 8;          // hotcues streamed per deck (markers on the waveform)
 StudioBridge.POSITION_MS = 50;     // position poll interval (~20 Hz)
 StudioBridge.HEARTBEAT_MS = 2000;  // re-send identity this often
 
 StudioBridge.MANUF = 0x7D;         // non-commercial SysEx id (matches the bridge)
 StudioBridge.MSG_IDENTITY = 0x01;
 StudioBridge.MSG_CLEARED  = 0x02;
+StudioBridge.MSG_HOTCUE   = 0x03;  // realtime cue: [num, enabled, posHi, posLo, r, g, b]
 
 StudioBridge._conns = [];
 StudioBridge._posTimer = 0;
@@ -38,6 +40,13 @@ StudioBridge.init = function (id, debug) {
         StudioBridge._connect(grp, "play",          StudioBridge.onPlay);
         StudioBridge._connect(grp, "sync_enabled",  StudioBridge.onSync);
         StudioBridge._connect(grp, "loop_enabled",  StudioBridge.onLoop);
+
+        // Stream hotcue edits live: set/clear (status), move (position), recolor.
+        for (var h = 1; h <= StudioBridge.HOTCUES; h++) {
+            StudioBridge._connect(grp, "hotcue_" + h + "_status",   StudioBridge.onHotcueChange);
+            StudioBridge._connect(grp, "hotcue_" + h + "_position", StudioBridge.onHotcueChange);
+            StudioBridge._connect(grp, "hotcue_" + h + "_color",    StudioBridge.onHotcueChange);
+        }
 
         if (engine.getValue(grp, "track_loaded") > 0)
             StudioBridge.sendIdentity(n);  // catch tracks already loaded at startup
@@ -118,6 +127,37 @@ StudioBridge.sendIdentity = function (deck) {
     StudioBridge._note(deck, 0x10, engine.getValue(grp, "play") > 0);
     StudioBridge._note(deck, 0x13, engine.getValue(grp, "sync_enabled") > 0);
     StudioBridge._note(deck, 0x18, engine.getValue(grp, "loop_enabled") > 0);
+    StudioBridge.sendAllHotcues(deck);   // and the track's hotcues
+};
+
+// Send one hotcue's full state: position as a fraction of track_samples + colour.
+// Disabled (no cue) sends enabled=0 so the bridge removes any stale marker.
+StudioBridge.sendHotcue = function (deck, n) {
+    var grp = "[Channel" + deck + "]";
+    var total = engine.getValue(grp, "track_samples");
+    var pos   = engine.getValue(grp, "hotcue_" + n + "_position");
+    var on    = (pos !== undefined && pos >= 0 && total > 0);
+    var v     = on ? Math.round(Math.max(0, Math.min(1, pos / total)) * 16383) : 0;
+
+    var col = engine.getValue(grp, "hotcue_" + n + "_color");
+    if (col === undefined || col < 0) col = 0xFFFFFF;   // unset/unsupported -> white
+    col = Math.round(col);
+    var r = Math.floor(col / 65536) % 256, g = Math.floor(col / 256) % 256, b = col % 256;
+
+    var raw = [(n - 1) & 0x7F, on ? 1 : 0, (v >> 7) & 0x7F, v & 0x7F, r, g, b];
+    var msg = [0xF0, StudioBridge.MANUF, StudioBridge.MSG_HOTCUE, deck]
+                  .concat(StudioBridge._pack7(raw), [0xF7]);
+    midi.sendSysexMsg(msg, msg.length);
+};
+
+StudioBridge.sendAllHotcues = function (deck) {
+    for (var n = 1; n <= StudioBridge.HOTCUES; n++) StudioBridge.sendHotcue(deck, n);
+};
+
+StudioBridge.onHotcueChange = function (value, group, key) {
+    var deck = StudioBridge._deckOf(group);
+    var m = key.match(/hotcue_(\d+)_/);
+    if (deck && m) StudioBridge.sendHotcue(deck, parseInt(m[1], 10));
 };
 
 StudioBridge.sendCleared = function (deck) {

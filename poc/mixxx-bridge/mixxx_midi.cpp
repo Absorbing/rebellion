@@ -63,6 +63,16 @@ void MidiDecoder::onMessage(const uint8_t* bytes, size_t len) {
             e.type = BridgeEventType::TrackIdentity;
         } else if (msgType == 0x02) {
             e.type = BridgeEventType::TrackCleared;
+        } else if (msgType == 0x03) {
+            // Realtime hotcue: [number, enabled, posHi, posLo, r, g, b].
+            if (payload.size() < 7) return;
+            e.type = BridgeEventType::HotcueUpdate;
+            e.enabled = payload[1] != 0;
+            e.hotcue.number   = payload[0];
+            e.hotcue.fraction = ((static_cast<int>(payload[2]) << 7) | payload[3]) / 16383.0;
+            e.hotcue.r = payload[4];
+            e.hotcue.g = payload[5];
+            e.hotcue.b = payload[6];
         } else {
             return;  // unknown/future sub-type
         }

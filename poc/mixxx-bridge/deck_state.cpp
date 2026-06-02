@@ -2,6 +2,8 @@
 
 #include "deck_state.hpp"
 
+#include <algorithm>
+
 namespace mxb {
 
 void DeckModel::apply(const BridgeEvent& e) {
@@ -54,6 +56,20 @@ void DeckModel::apply(const BridgeEvent& e) {
         case BridgeEventType::TrackCleared:
             d = DeckState{};        // reset, leaves dirty = true
             break;
+        case BridgeEventType::HotcueUpdate: {
+            // Reconcile one hotcue: upsert by number, or remove when disabled.
+            auto it = std::find_if(d.hotcues.begin(), d.hotcues.end(),
+                                   [&](const Hotcue& h) { return h.number == e.hotcue.number; });
+            if (!e.enabled) {
+                if (it != d.hotcues.end()) { d.hotcues.erase(it); d.dirty = true; }
+            } else if (it == d.hotcues.end()) {
+                d.hotcues.push_back(e.hotcue); d.dirty = true;
+            } else if (!(it->fraction == e.hotcue.fraction && it->r == e.hotcue.r &&
+                         it->g == e.hotcue.g && it->b == e.hotcue.b)) {
+                *it = e.hotcue; d.dirty = true;
+            }
+            break;
+        }
         case BridgeEventType::Play:         setB(d.playing, e.value != 0.0); break;
         case BridgeEventType::TrackLoaded:  setB(d.loaded,  e.value != 0.0); break;
         case BridgeEventType::SyncEnabled:  setB(d.sync,    e.value != 0.0); break;

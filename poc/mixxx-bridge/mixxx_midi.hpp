@@ -15,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include "hotcue.hpp"
+
 namespace mxb {
 
 // What a decoded message means to the bridge. One MIDI message -> one event.
@@ -22,6 +24,7 @@ enum class BridgeEventType {
     Unknown,
     TrackIdentity, // SysEx 0x01: deck got a track; `fp` = numeric fingerprint
     TrackCleared,  // SysEx 0x02: deck unloaded
+    HotcueUpdate,  // SysEx 0x03: realtime cue; `hotcue`+`enabled` (remove if !enabled)
     Play,          // bool in `value` (0/1)
     TrackLoaded,   // bool
     CueIndicator,  // bool
@@ -68,6 +71,8 @@ struct BridgeEvent {
     int     index   = 0;     // hotcue / sub-index where relevant
     double  value   = 0.0;   // numeric payload (already converted to real units)
     TrackFingerprint fp;     // populated for TrackIdentity
+    Hotcue  hotcue;          // populated for HotcueUpdate
+    bool    enabled = false; // HotcueUpdate: false => remove this hotcue
 };
 
 // BPM CC mapping (SPEC §3.3.2): bpm sent as value over a 60..187.5 range across

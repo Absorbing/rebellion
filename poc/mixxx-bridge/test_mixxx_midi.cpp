@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstdint>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -174,6 +175,45 @@ int main() {
         // clear: F0 7D 02 <deck> F7
         dec.onMessage({0xF0, 0x7D, 0x02, 0x01, 0xF7});
         CHECK(!model.deck(1).loaded, "deck1 cleared");
+    }
+
+    // --- 6. Realtime hotcue SysEx (0x03): decode + reconcile -----------------
+    {
+        auto hotcueSysex = [](int deck, int num, bool on, double frac,
+                              uint8_t r, uint8_t g, uint8_t b) {
+            int v = static_cast<int>(frac * 16383);
+            std::vector<uint8_t> raw = {static_cast<uint8_t>(num), static_cast<uint8_t>(on ? 1 : 0),
+                static_cast<uint8_t>((v >> 7) & 0x7F), static_cast<uint8_t>(v & 0x7F), r, g, b};
+            std::vector<uint8_t> msg = {0xF0, 0x7D, 0x03, static_cast<uint8_t>(deck)};
+            auto packed = packPayload(raw);
+            msg.insert(msg.end(), packed.begin(), packed.end());
+            msg.push_back(0xF7);
+            return msg;
+        };
+
+        // Decode: fields survive the pack (colour bytes > 0x7F exercise the MSB pack).
+        BridgeEvent got; bool saw = false;
+        MidiDecoder dec([&](const BridgeEvent& e) {
+            if (e.type == BridgeEventType::HotcueUpdate) { got = e; saw = true; }
+        });
+        dec.onMessage(hotcueSysex(2, 0, true, 0.25, 0xC5, 0x0A, 0x08));
+        CHECK(saw && got.deck == 2 && got.enabled, "hotcue update decoded, enabled");
+        CHECK(got.hotcue.number == 0 && std::abs(got.hotcue.fraction - 0.25) < 0.001,
+              "hotcue number + fraction");
+        CHECK(got.hotcue.r == 0xC5 && got.hotcue.g == 0x0A && got.hotcue.b == 0x08,
+              "hotcue colour survives 7-bit pack");
+
+        // Reconcile in the model: upsert, move, then remove.
+        DeckModel model(nullptr);
+        MidiDecoder dec2([&](const BridgeEvent& e) { model.apply(e); });
+        dec2.onMessage(hotcueSysex(1, 0, true, 0.1, 255, 0, 0));
+        dec2.onMessage(hotcueSysex(1, 1, true, 0.5, 0, 255, 0));
+        CHECK(model.deck(1).hotcues.size() == 2, "two hotcues upserted");
+        dec2.onMessage(hotcueSysex(1, 0, true, 0.2, 255, 0, 0));   // move cue 0
+        CHECK(model.deck(1).hotcues.size() == 2, "moving a cue does not duplicate");
+        dec2.onMessage(hotcueSysex(1, 1, false, 0.0, 0, 0, 0));    // clear cue 1
+        CHECK(model.deck(1).hotcues.size() == 1, "disabled hotcue removed");
+        CHECK(model.deck(1).hotcues[0].number == 0, "cue 0 remains");
     }
 
     if (g_fail == 0) std::printf("ALL MIXXX-BRIDGE TESTS PASSED\n");
