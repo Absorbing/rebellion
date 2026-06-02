@@ -127,19 +127,10 @@ void sendLed(int index, uint8_t color, uint8_t intensity) {
                   static_cast<uint32_t>(s.size()));
 }
 
-// Push deck-state LEDs (pads + GROUP focus + transport), only the changed ones.
-void updateLeds(mxb::DeckModel& model) {
-    static std::map<int, mxb::LedCmd> last;
-    std::vector<mxb::LedCmd> want;
-    mxb::computeLeds(model, want);
-    for (const auto& c : want) {
-        if (c.index <= 0) continue;
-        auto it = last.find(c.index);
-        if (it == last.end() || !(it->second == c)) {
-            sendLed(c.index, c.color, c.intensity);
-            last[c.index] = c;
-        }
-    }
+// Turn every LED off, so the device starts dark (the bridge only lights LEDs
+// once purposeful feedback -- hotcues, peak meters -- is wired).
+void clearAllLeds() {
+    for (int i = 1; i <= mxb::studioled::LEDCNT; ++i) sendLed(i, mxb::ledcolor::OFF, 0);
 }
 
 // Move the library cursor one row and lock-step Mixxx's selection.
@@ -425,6 +416,8 @@ int main(int argc, char** argv) {
         }
     }
 
+    clearAllLeds();  // start dark; LEDs light only with purposeful feedback
+
     // Load the browsable library list from mixxxdb (ordered by Artist, Title).
     {
         std::vector<mxb::LibRow> rows; std::string lerr2;
@@ -458,7 +451,6 @@ int main(int argc, char** argv) {
             lastBrowse = g_browse;
         }
 
-        updateLeds(model);  // pads + GROUP A/B = per-deck state
 
         // Redraw, throttled. In browse mode the list owns display 0; deck B keeps
         // updating on display 1. (Full-frame pushes are heavy; SPEC §4.4 diffs later.)
