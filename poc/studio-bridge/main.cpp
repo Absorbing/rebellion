@@ -71,7 +71,7 @@ int         g_knobAccum = 0;     // KNOB9 sends several ticks/detent; divide the
 bool        g_addrDirty = true;
 std::string g_lastInput = "(press / turn a control)";
 bool        g_inputDirty = true;
-constexpr int kMapMax  = 300;    // must match the Studio ledcnt in mappings.lua
+constexpr int kMapMax  = 213;    // true Studio LED count (matches mappings.lua ledcnt)
 constexpr int kKnobDiv = 4;      // KNOB9 ticks per one LED-address step
 
 int knobNameToIndex(const std::string& name) {  // "KNOB1".."KNOB8" -> 1..8, else 0

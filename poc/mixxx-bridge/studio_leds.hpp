@@ -89,7 +89,7 @@ constexpr int PLAY = 29, REC = 30, RESTART = 28, GRID = 27, METRO = 31,
               BACK = 55, NAV_PREV = 54, NAV_NEXT = 53, ENTER = 52;
 }
 
-constexpr int LEDCNT = 300;  // mappings.lua Studio ledcnt
+constexpr int LEDCNT = 213;  // mappings.lua Studio ledcnt (true count)
 
 }  // namespace studioled
 }  // namespace mxb
