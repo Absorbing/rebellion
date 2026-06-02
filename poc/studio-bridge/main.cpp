@@ -257,18 +257,24 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
             if (id == 16) { if (pressed) g_focusedDeck = 1; return 0; }
             if (id == 19) { if (pressed) g_focusedDeck = 2; return 0; }
 
-            if (g_browse) {                       // nav cluster drives the list
-                if (pressed) switch (id) {
-                    case 52: g_out.send(mxb::mapLoadDeck(g_focusedDeck)); g_browse = false; break; // ENTER: load + close
-                    case 55: g_browse = false; break;                                              // BACK: cancel
-                    case 54: libPage(-1); break;                                                   // < : page up
-                    case 53: libPage(+1); break;                                                   // > : page down
-                    default: break;                                                                // ignore others
-                }
+            // BROWSE button (id 5) toggles the library list at any time.
+            if (id == mxb::studioled::btn::BROWSE) {
+                if (pressed) { if (g_browse) g_browse = false; else libEnter(); }
                 return 0;
             }
 
-            if (id == 52 && pressed) { libEnter(); return 0; }  // ENTER opens browse
+            if (g_browse) {                       // jog-click / nav cluster drive the list
+                if (pressed) switch (id) {
+                    case mxb::studioled::btn::JOG_CLICK:                 // jog-click: load + close
+                    case mxb::studioled::btn::ENTER:                    // ENTER: load + close
+                        g_out.send(mxb::mapLoadDeck(g_focusedDeck)); g_browse = false; break;
+                    case mxb::studioled::btn::BACK:     g_browse = false; break;  // cancel
+                    case mxb::studioled::btn::NAV_PREV: libPage(-1); break;       // < : page up
+                    case mxb::studioled::btn::NAV_NEXT: libPage(+1); break;       // > : page down
+                    default: break;
+                }
+                return 0;
+            }
 
             // Deck-focus transport; everything else forwarded raw for Mixxx mapping.
             switch (id) {
@@ -430,14 +436,14 @@ int main(int argc, char** argv) {
         std::vector<mxb::LibRow> rows; std::string lerr2;
         if (mxb::queryLibraryTracks(g_mixxxDir, 2000, rows, lerr2)) {
             g_lib.setTracks(std::move(rows));
-            std::fprintf(stderr, "library: %d tracks (ENTER opens browse)\n", g_lib.size());
+            std::fprintf(stderr, "library: %d tracks (BROWSE opens the list)\n", g_lib.size());
         } else {
             std::fprintf(stderr, "library load failed: %s\n", lerr2.c_str());
         }
     }
 
     std::fprintf(stderr, "ready: display 0 = Deck A, display 1 = Deck B. "
-                         "Load tracks in Mixxx; ENTER to browse. Ctrl+C to exit.\n");
+                         "Load tracks in Mixxx; BROWSE opens the library.  Ctrl+C to exit.\n");
 
     auto lastDraw = std::chrono::steady_clock::now();
     int lastFocus = 0;

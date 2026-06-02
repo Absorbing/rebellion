@@ -83,10 +83,18 @@ constexpr int CHANNEL = 41, PLUGIN = 42, ARRANGE = 43, MIX = 44, BROWSE = 45,
 namespace btn {
 constexpr int PLAY = 29, REC = 30, RESTART = 28, GRID = 27, METRO = 31,
               EVENTS = 24, ERASE = 25, SHIFT = 26, NOTE_REPEAT = 11,
-              STEP = 9, MACRO = 10,
+              STEP = 9, MACRO = 10, TAP = 8,
               GROUP_A = 16, GROUP_B = 19, GROUP_C = 20, GROUP_D = 23,
               GROUP_E = 17, GROUP_F = 18, GROUP_G = 21, GROUP_H = 22,
-              BACK = 55, NAV_PREV = 54, NAV_NEXT = 53, ENTER = 52;
+              // nav cluster + jog (jog = KNOB9 rotate; JOG_CLICK = its push)
+              BACK = 55, NAV_PREV = 54, NAV_NEXT = 53, ENTER = 52, JOG_CLICK = 51,
+              // left column (LED 41-50)
+              CHANNEL = 7, PLUGIN = 0, ARRANGE = 6, MIX = 1, BROWSE = 5,
+              SAMPLING = 2, COL_PREV = 4, COL_NEXT = 3, ALL = 13, AUTO = 12,
+              // I/O + level section (LED 55-62)
+              IN1 = 72, IN2 = 73, IN3 = 74, IN4 = 75,
+              MST = 79, GRP = 78, SND = 77, CUE = 76;
+// Top row above the screens (LED 33-40, left->right): ids 64,71,70,65,69,66,68,67.
 }
 
 constexpr int LEDCNT = 213;  // mappings.lua Studio ledcnt (true count)
