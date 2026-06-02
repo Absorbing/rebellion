@@ -38,27 +38,19 @@
         <status>0x90</status><midino>0x71</midino><options><normal/></options></control>
       <control><group>[Library]</group><key>StudioCtl.libTop</key>
         <status>0x90</status><midino>0x72</midino><options><script-binding/></options></control>
-      <control><group>[Channel1]</group><key>LoadSelectedTrack</key>
-        <status>0x90</status><midino>0x73</midino><options><normal/></options></control>
-      <control><group>[Channel2]</group><key>LoadSelectedTrack</key>
-        <status>0x90</status><midino>0x74</midino><options><normal/></options></control>
+      <control><group>[Library]</group><key>LoadSelectedIntoFirstStopped</key>
+        <status>0x90</status><midino>0x75</midino><options><normal/></options></control>
 
-      <!-- Deck-focus transport: the bridge routes the single PLAY/CUE/SYNC
-           buttons to the focused deck as per-deck notes (GROUP_A/B pick focus,
-           handled inside the bridge, not here).
-             play  deck1=0x60 deck2=0x61 ; cue 0x62/0x63 ; sync 0x64/0x65 -->
+      <!-- The bridge reserves ONLY the library controls above. Every other Studio
+           control is forwarded raw on note = button id (ch1), pad id (ch2), or a
+           relative CC for knobs -- so map them here or via the Learning Wizard.
+           e.g. PLAY=0x1D(29) REC=0x1E(30) RESTART=0x1C(28) GRID=0x1B(27)
+                GROUP A-H = 0x10/0x13/0x14/0x17/0x11/0x12/0x15/0x16
+           Starter raw bindings (edit freely): -->
       <control><group>[Channel1]</group><key>play</key>
-        <status>0x90</status><midino>0x60</midino><options><normal/></options></control>
+        <status>0x90</status><midino>0x10</midino><options><normal/></options></control>  <!-- GROUP_A=16 -->
       <control><group>[Channel2]</group><key>play</key>
-        <status>0x90</status><midino>0x61</midino><options><normal/></options></control>
-      <control><group>[Channel1]</group><key>cue_default</key>
-        <status>0x90</status><midino>0x62</midino><options><normal/></options></control>
-      <control><group>[Channel2]</group><key>cue_default</key>
-        <status>0x90</status><midino>0x63</midino><options><normal/></options></control>
-      <control><group>[Channel1]</group><key>sync_enabled</key>
-        <status>0x90</status><midino>0x64</midino><options><normal/></options></control>
-      <control><group>[Channel2]</group><key>sync_enabled</key>
-        <status>0x90</status><midino>0x65</midino><options><normal/></options></control>
+        <status>0x90</status><midino>0x13</midino><options><normal/></options></control>  <!-- GROUP_B=19 -->
 
       <!-- Pads 1-8 (ch2) = Deck 1 hotcues 1-8 activate. -->
       <control><group>[Channel1]</group><key>hotcue_1_activate</key>

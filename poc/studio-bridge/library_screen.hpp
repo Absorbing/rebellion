@@ -17,17 +17,16 @@ inline std::string truncTo(const std::string& s, int maxChars) {
     return s.substr(0, maxChars - 1) + ">";
 }
 
-// Render the browse list. `focusedDeck` (1/2) is the load target shown in header.
-inline void renderLibrary(Framebuffer& fb, const LibraryModel& lib, int focusedDeck) {
+// Render the browse list. ENTER/jog-click loads to Mixxx's first stopped deck.
+inline void renderLibrary(Framebuffer& fb, const LibraryModel& lib) {
     using namespace dp;
     fb.clear(BG);
 
     // header
     fb.fillRect(0, 0, kW, 20, PANEL);
     fb.text(6, 4, "LIBRARY", CYAN, 2);
-    char deck = static_cast<char>('A' + (focusedDeck - 1));
     std::string hdr = std::to_string(lib.empty() ? 0 : lib.cursor() + 1) + "/" +
-                      std::to_string(lib.size()) + "  ENTER>" + deck;
+                      std::to_string(lib.size()) + "  ENTER=LOAD";
     rightText(fb, kW - 6, 6, hdr, DIM, 1);
 
     if (lib.empty()) {

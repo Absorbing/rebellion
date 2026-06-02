@@ -18,17 +18,15 @@ int main() {
         return LedCmd{-1, 99, 99};
     };
 
-    // Empty decks, focus deck 1: pads off; GROUP A cyan (focused); PLAY off.
-    computeLeds(model, 1, cmds);
+    // Empty decks: pads + GROUP A/B off.
+    computeLeds(model, cmds);
     CHECK(find(studioled::padRGB(1, 1)).intensity == 0, "empty pad off");
-    CHECK(find(studioled::groupRGB(1, 1)).intensity == 3 &&
-          find(studioled::groupRGB(1, 2)).intensity == 3, "GROUP A focused -> cyan (G+B)");
-    CHECK(find(studioled::PLAY).intensity == 0, "PLAY off when focused deck empty");
+    CHECK(find(studioled::groupRGB(1, 1)).intensity == 0, "GROUP A off when empty");
 
-    // Deck 1 playing (pads 1-8 green), deck 2 loaded+stopped (pads 9-16 blue dim).
+    // Deck 1 playing (pads 1-8 + GROUP A green), deck 2 loaded+stopped (blue dim).
     model.deck(1).loaded = true; model.deck(1).playing = true;
     model.deck(2).loaded = true; model.deck(2).playing = false;
-    computeLeds(model, 1, cmds);
+    computeLeds(model, cmds);
 
     // pad 1 (deck1): R off, G bright, B off.
     CHECK(find(studioled::padRGB(1, 0)).intensity == 0, "pad1 R off");
@@ -43,16 +41,11 @@ int main() {
     CHECK(find(studioled::padRGB(9, 2)).intensity == 1, "pad9 B dim (loaded,stopped=blue)");
     CHECK(find(studioled::padRGB(16, 2)).intensity == 1, "pad16 B dim (deck2)");
 
-    // Focused deck 1 transport LEDs (PLAY bright, SYNC dim since not synced).
-    CHECK(find(studioled::PLAY).intensity == 3, "PLAY bright (focused deck playing)");
-    CHECK(find(studioled::RESTART).intensity == 1, "CUE(RESTART) dim (focused loaded)");
-    // GROUP B unfocused+loaded -> blue dim.
-    CHECK(find(studioled::groupRGB(2, 2)).intensity == 1, "GROUP B unfocused loaded -> blue dim");
-
-    // Switch focus to deck 2 -> GROUP B cyan, PLAY reflects deck 2 (loaded, stopped).
-    computeLeds(model, 2, cmds);
-    CHECK(find(studioled::groupRGB(2, 1)).intensity == 3, "GROUP B focused -> cyan");
-    CHECK(find(studioled::PLAY).intensity == 1, "PLAY dim (focused deck2 loaded, stopped)");
+    // GROUP A = deck 1 (green bright, playing); GROUP B = deck 2 (blue dim, loaded).
+    CHECK(find(studioled::groupRGB(1, 1)).intensity == 3, "GROUP A green (deck1 playing)");
+    CHECK(find(studioled::groupRGB(2, 2)).intensity == 1, "GROUP B blue dim (deck2 loaded)");
+    // Transport LEDs are no longer driven (PLAY etc. are raw/user-mapped now).
+    CHECK(find(studioled::PLAY).index == -1, "PLAY LED not driven by bridge");
 
     // Index sanity from the probed map.
     CHECK(studioled::padRGB(1, 0) == 1 && studioled::padRGB(8, 2) == 24, "pads 1-8 at 1..24");

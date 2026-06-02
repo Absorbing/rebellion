@@ -12,7 +12,7 @@ int main() {
     LibraryModel lib;
 
     // Empty list renders (the "no tracks" path) and encodes.
-    { Framebuffer fb; renderLibrary(fb, lib, 1);
+    { Framebuffer fb; renderLibrary(fb, lib);
       CHECK(fb.encodeDisplayCommands(0).size() > 16, "empty library renders"); }
 
     std::vector<LibRow> rows;
@@ -24,7 +24,7 @@ int main() {
 
     for (int deck = 1; deck <= 2; ++deck) {
         Framebuffer fb;
-        renderLibrary(fb, lib, deck);
+        renderLibrary(fb, lib);
         auto cmd = fb.encodeDisplayCommands(deck - 1);
         CHECK(fb.px.size() == static_cast<size_t>(kW) * kH, "framebuffer sized");
         CHECK(cmd.size() > 16, "library renders + encodes");
@@ -32,8 +32,8 @@ int main() {
     }
 
     // Top and bottom edges render without going out of range.
-    lib.toTop();      { Framebuffer fb; renderLibrary(fb, lib, 1); (void)fb; }
-    lib.move(10000);  { Framebuffer fb; renderLibrary(fb, lib, 1); (void)fb; }
+    lib.toTop();      { Framebuffer fb; renderLibrary(fb, lib); (void)fb; }
+    lib.move(10000);  { Framebuffer fb; renderLibrary(fb, lib); (void)fb; }
 
     if (g_fail == 0) std::printf("ALL LIBRARY-SCREEN TESTS PASSED\n");
     else             std::printf("%d CHECK(S) FAILED\n", g_fail);
