@@ -24,7 +24,25 @@
     <description>Maps forwarded Maschine Studio controls to Mixxx actions. Starter 2-deck set; extend or MIDI-learn.</description>
   </info>
   <controller id="MixxxStudioBridgeControl">
+    <scriptfiles>
+      <file filename="Studio-Control.scripts.js" functionprefix="StudioCtl"/>
+    </scriptfiles>
     <controls>
+      <!-- Library browse (deck-focus): the bridge owns the on-device list and
+           lock-steps Mixxx's selection. UP/DOWN move the selection one row; TOP
+           jumps to the top (script); LOAD loads the selection to a deck.
+           Set Mixxx's library sort to Artist so the lists stay aligned. -->
+      <control><group>[Library]</group><key>MoveUp</key>
+        <status>0x90</status><midino>0x70</midino><options><normal/></options></control>
+      <control><group>[Library]</group><key>MoveDown</key>
+        <status>0x90</status><midino>0x71</midino><options><normal/></options></control>
+      <control><group>[Library]</group><key>StudioCtl.libTop</key>
+        <status>0x90</status><midino>0x72</midino><options><script-binding/></options></control>
+      <control><group>[Channel1]</group><key>LoadSelectedTrack</key>
+        <status>0x90</status><midino>0x73</midino><options><normal/></options></control>
+      <control><group>[Channel2]</group><key>LoadSelectedTrack</key>
+        <status>0x90</status><midino>0x74</midino><options><normal/></options></control>
+
       <!-- Deck-focus transport: the bridge routes the single PLAY/CUE/SYNC
            buttons to the focused deck as per-deck notes (GROUP_A/B pick focus,
            handled inside the bridge, not here).

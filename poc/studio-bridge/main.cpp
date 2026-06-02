@@ -41,6 +41,9 @@ extern "C" {
 #include "control_map.hpp"
 #include "midi_out.hpp"
 #include "led_map.hpp"
+#include "mixxxdb.hpp"
+#include "library_model.hpp"
+#include "library_screen.hpp"
 
 namespace {
 
@@ -61,6 +64,13 @@ mxb::MidiOut g_out;
 // Deck-focus model: which deck the single transport buttons (PLAY/CUE/SYNC) act
 // on. GROUP_A/B set it. Set in rpc_callback (main thread), read in the loop.
 int g_focusedDeck = 1;
+
+// Library browse: ENTER opens it, jog (KNOB9) scrolls, ENTER loads to the
+// focused deck, BACK cancels. The bridge owns the list (from mixxxdb) and
+// lock-steps Mixxx's library selection so LoadSelectedTrack loads the right row.
+mxb::LibraryModel g_lib;
+bool g_browse = false;
+bool g_browseDirty = false;
 
 // Interactive mapping tool (MXB_LED_PROBE=1): KNOB1 scrubs an LED address (lit on
 // the device, shown on screen 0); any control pressed/turned is echoed on screen
@@ -130,6 +140,21 @@ void updateLeds(mxb::DeckModel& model, int focusedDeck) {
             last[c.index] = c;
         }
     }
+}
+
+// Move the library cursor one row and lock-step Mixxx's selection.
+void libStep(int dir) {
+    int applied = g_lib.move(dir);
+    if (applied > 0)      g_out.send(mxb::libNote(mxb::kLibDown));
+    else if (applied < 0) g_out.send(mxb::libNote(mxb::kLibUp));
+    if (applied) g_browseDirty = true;
+}
+void libPage(int dir) { for (int i = 0; i < 10; ++i) libStep(dir); }
+void libEnter() {       // open browse and force both lists to the top
+    g_browse = true;
+    g_lib.toTop();
+    g_out.send(mxb::libNote(mxb::kLibTop));
+    g_browseDirty = true;
 }
 
 void pump(int ms) { for (int e = 0; e < ms; e += SLICE_MS) rebellion_loop(SLICE_MS); }
@@ -205,32 +230,64 @@ int rpc_callback(rebellion_message_format mf, rebellion_message_type,
             return 0;
         }
 
-        // --- Studio controls -> outbound MIDI (forward to Mixxx) -------------
+        // --- Knobs ----------------------------------------------------------
+        if (ev == "KNOB_ROTATE") {
+            std::string knob = jstr(fields, "knob"), dir = jstr(fields, "direction");
+            if (g_browse) {                       // jog scrolls the library list
+                if (knob == "KNOB9") {
+                    g_knobAccum += (dir == "CLOCKWISE") ? 1 : -1;
+                    while (g_knobAccum >= kKnobDiv)  { libStep(+1); g_knobAccum -= kKnobDiv; }
+                    while (g_knobAccum <= -kKnobDiv) { libStep(-1); g_knobAccum += kKnobDiv; }
+                }
+                return 0;
+            }
+            int k = knobNameToIndex(knob);
+            if (k >= 1 && !dir.empty()) g_out.send(mxb::mapKnobRotate(k, dir == "CLOCKWISE"));
+            return 0;
+        }
+
+        // --- Buttons --------------------------------------------------------
         if (ev == "BTN_DATA") {
             int id = jint(fields, "buttonid", -1);
             std::string state = jstr(fields, "state");
             if (id < 0 || (state != "PRESSED" && state != "RELEASED")) return 0;
             const bool pressed = (state == "PRESSED");
-            // Deck-focus: GROUP_A/B pick the active deck; the single transport
-            // buttons act on it; everything else is forwarded raw.
+
+            // GROUP_A/B always pick the focused deck (also the browse load target).
+            if (id == 16) { if (pressed) g_focusedDeck = 1; return 0; }
+            if (id == 19) { if (pressed) g_focusedDeck = 2; return 0; }
+
+            if (g_browse) {                       // nav cluster drives the list
+                if (pressed) switch (id) {
+                    case 52: g_out.send(mxb::mapLoadDeck(g_focusedDeck)); g_browse = false; break; // ENTER: load + close
+                    case 55: g_browse = false; break;                                              // BACK: cancel
+                    case 54: libPage(-1); break;                                                   // < : page up
+                    case 53: libPage(+1); break;                                                   // > : page down
+                    default: break;                                                                // ignore others
+                }
+                return 0;
+            }
+
+            if (id == 52 && pressed) { libEnter(); return 0; }  // ENTER opens browse
+
+            // Deck-focus transport; everything else forwarded raw for Mixxx mapping.
             switch (id) {
-                case 16: if (pressed) g_focusedDeck = 1; break;   // GROUP_A -> focus deck 1
-                case 19: if (pressed) g_focusedDeck = 2; break;   // GROUP_B -> focus deck 2
                 case 29: g_out.send(mxb::mapTransport(mxb::Transport::Play, g_focusedDeck, pressed)); break;  // PLAY
                 case 28: g_out.send(mxb::mapTransport(mxb::Transport::Cue,  g_focusedDeck, pressed)); break;  // RESTART -> CUE
                 case 27: g_out.send(mxb::mapTransport(mxb::Transport::Sync, g_focusedDeck, pressed)); break;  // GRID -> SYNC
                 default: g_out.send(mxb::mapButton(id, pressed)); break;
             }
-        } else if (ev == "PAD_DATA") {
+            return 0;
+        }
+
+        // --- Pads -----------------------------------------------------------
+        if (ev == "PAD_DATA") {
+            if (g_browse) return 0;               // pads inert while browsing
             int pad = jint(fields, "padid", -1);
             std::string state = jstr(fields, "state");
             if (pad >= 1 && (state == "PRESSED" || state == "RELEASED"))
                 g_out.send(mxb::mapPad(pad, state == "PRESSED", jint(fields, "cpressure", 0)));
-        } else if (ev == "KNOB_ROTATE") {
-            int k = knobNameToIndex(jstr(fields, "knob"));
-            std::string dir = jstr(fields, "direction");
-            if (k >= 1 && !dir.empty())
-                g_out.send(mxb::mapKnobRotate(k, dir == "CLOCKWISE"));
+            return 0;
         }
     } catch (...) {
         return 0;  // never let a malformed event crash the process
@@ -368,11 +425,23 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Load the browsable library list from mixxxdb (ordered by Artist, Title).
+    {
+        std::vector<mxb::LibRow> rows; std::string lerr2;
+        if (mxb::queryLibraryTracks(g_mixxxDir, 2000, rows, lerr2)) {
+            g_lib.setTracks(std::move(rows));
+            std::fprintf(stderr, "library: %d tracks (ENTER opens browse)\n", g_lib.size());
+        } else {
+            std::fprintf(stderr, "library load failed: %s\n", lerr2.c_str());
+        }
+    }
+
     std::fprintf(stderr, "ready: display 0 = Deck A, display 1 = Deck B. "
-                         "Load tracks in Mixxx. Ctrl+C to exit.\n");
+                         "Load tracks in Mixxx; ENTER to browse. Ctrl+C to exit.\n");
 
     auto lastDraw = std::chrono::steady_clock::now();
     int lastFocus = 0;
+    bool lastBrowse = false;
     for (;;) {
         rebellion_loop(INPUT_POLL_MS);
 
@@ -384,26 +453,44 @@ int main(int argc, char** argv) {
         }
         for (const auto& e : batch) model.apply(e);
 
-        // Focus changed (GROUP_A/B) -> repaint both deck borders.
+        // Focus changed (GROUP_A/B) -> repaint deck borders / browse header.
         if (g_focusedDeck != lastFocus) {
             model.deck(1).dirty = true;
             model.deck(2).dirty = true;
+            if (g_browse) g_browseDirty = true;
             lastFocus = g_focusedDeck;
+        }
+        // Leaving browse -> repaint the decks that the list covered.
+        if (g_browse != lastBrowse) {
+            if (!g_browse) { model.deck(1).dirty = true; model.deck(2).dirty = true; }
+            lastBrowse = g_browse;
         }
 
         updateLeds(model, g_focusedDeck);  // pads + GROUP focus + transport LEDs
 
-        // Redraw any deck whose state changed, throttled. (Full-frame overview
-        // pushes are heavy; SPEC §4.4 diff-regions is the later optimisation.)
+        // Redraw, throttled. In browse mode the list owns display 0; deck B keeps
+        // updating on display 1. (Full-frame pushes are heavy; SPEC §4.4 diffs later.)
         if (msSince(lastDraw) >= REDRAW_MIN_MS) {
-            for (int disp = 0; disp < 2; ++disp) {
-                int deckNum = kDeckForDisplay[disp];
-                mxb::DeckState& d = model.deck(deckNum);
-                if (d.dirty) {
-                    mxb::Framebuffer fb;
-                    mxb::renderDeckPanel(fb, deckNum, d, deckNum == g_focusedDeck);
-                    sendFB(disp, fb);
-                    d.dirty = false;
+            if (g_browse) {
+                if (g_browseDirty) {
+                    mxb::Framebuffer fb; mxb::renderLibrary(fb, g_lib, g_focusedDeck);
+                    sendFB(0, fb); g_browseDirty = false;
+                }
+                mxb::DeckState& d2 = model.deck(2);
+                if (d2.dirty) {
+                    mxb::Framebuffer fb; mxb::renderDeckPanel(fb, 2, d2, 2 == g_focusedDeck);
+                    sendFB(1, fb); d2.dirty = false;
+                }
+            } else {
+                for (int disp = 0; disp < 2; ++disp) {
+                    int deckNum = kDeckForDisplay[disp];
+                    mxb::DeckState& d = model.deck(deckNum);
+                    if (d.dirty) {
+                        mxb::Framebuffer fb;
+                        mxb::renderDeckPanel(fb, deckNum, d, deckNum == g_focusedDeck);
+                        sendFB(disp, fb);
+                        d.dirty = false;
+                    }
                 }
             }
             lastDraw = std::chrono::steady_clock::now();

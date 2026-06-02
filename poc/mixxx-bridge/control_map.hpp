@@ -66,4 +66,16 @@ inline MidiOutMsg mapTransport(Transport t, int deck, bool pressed) {
              static_cast<uint8_t>(pressed ? 0x7F : 0x00) };
 }
 
+// Library browse notes (ch 1). The bridge owns the on-device list but drives
+// Mixxx's library selection in lock-step so LoadSelectedTrack loads the right
+// track. Mixxx maps: UP->[Library]MoveUp, DOWN->MoveDown, TOP->script(top),
+// LOAD1/2->[ChannelN]LoadSelectedTrack.
+constexpr uint8_t kLibUp = 0x70, kLibDown = 0x71, kLibTop = 0x72,
+                  kLoadD1 = 0x73, kLoadD2 = 0x74;
+
+inline MidiOutMsg libNote(uint8_t note) {  // momentary press
+    return { static_cast<uint8_t>(0x90 | (kButtonChannel - 1)), note, 0x7F };
+}
+inline MidiOutMsg mapLoadDeck(int deck) { return libNote(deck == 2 ? kLoadD2 : kLoadD1); }
+
 }  // namespace mxb

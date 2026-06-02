@@ -134,6 +134,20 @@ add_executable(mxb_led_map_tests
 target_link_libraries(mxb_led_map_tests PRIVATE mxb_mixxx_bridge)
 add_test(NAME mxb_led_map_tests COMMAND mxb_led_map_tests)
 
+# Library browse model + list-screen render tests.
+add_executable(mxb_library_model_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/mixxx-bridge/test_library_model.cpp)
+target_link_libraries(mxb_library_model_tests PRIVATE mxb_mixxx_bridge)
+add_test(NAME mxb_library_model_tests COMMAND mxb_library_model_tests)
+
+add_executable(mxb_library_screen_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-bridge/test_library_screen.cpp)
+target_include_directories(mxb_library_screen_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-waveform
+    ${CMAKE_CURRENT_SOURCE_DIR}/studio-bridge)
+target_link_libraries(mxb_library_screen_tests PRIVATE mxb_mixxx_bridge)
+add_test(NAME mxb_library_screen_tests COMMAND mxb_library_screen_tests)
+
 # Deck-panel render smoke test (no device).
 add_executable(mxb_deck_panel_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/studio-bridge/test_deck_panel.cpp
