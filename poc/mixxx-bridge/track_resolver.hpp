@@ -13,8 +13,11 @@
 #pragma once
 #include <string>
 
+#include <vector>
+
 #include "mixxx_midi.hpp"   // TrackFingerprint
 #include "waveform.hpp"
+#include "hotcue.hpp"
 
 namespace mxb {
 
@@ -26,7 +29,13 @@ struct ResolvedTrack {
     std::string location;     // for logging/diagnostics only
     double      bpm = 0.0;    // library.bpm (authoritative; reflects user edits)
     Waveform    waveform;
+    std::vector<Hotcue> hotcues;
 };
+
+// Query a track's hotcues (cues.hotcue >= 0), with positions as a fraction of the
+// track (position_frames / (duration * samplerate)) and colour from cues.color.
+bool queryHotcues(const std::string& mixxx_dir, int library_id,
+                  std::vector<Hotcue>& out, std::string& err);
 
 // Resolve + decode in one call. Returns false + err on no match / decode fail.
 bool resolveTrackByFingerprint(const std::string& mixxx_dir,

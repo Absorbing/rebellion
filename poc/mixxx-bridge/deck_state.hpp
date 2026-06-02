@@ -9,9 +9,11 @@
 #include <array>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "mixxx_midi.hpp"
 #include "waveform.hpp"
+#include "hotcue.hpp"
 
 namespace mxb {
 
@@ -30,15 +32,17 @@ struct DeckState {
     bool        loop     = false;
     Waveform    waveform;        // decoded on track load
     bool        hasWaveform = false;
+    std::vector<Hotcue> hotcues; // markers on the waveform
     bool        dirty    = true;  // renderer clears after drawing
 };
 
 class DeckModel {
 public:
-    // Loader: given a track fingerprint, fill artist/title/bpm/waveform. Returns
-    // false if unresolved (DeckState keeps what Mixxx sent, just no waveform).
+    // Loader: given a track fingerprint, fill artist/title/bpm/waveform/hotcues.
+    // Returns false if unresolved (DeckState keeps what Mixxx sent, no waveform).
     using Loader = std::function<bool(const TrackFingerprint& fp, std::string& artist,
-                                      std::string& title, double& bpm, Waveform& wf)>;
+                                      std::string& title, double& bpm, Waveform& wf,
+                                      std::vector<Hotcue>& hotcues)>;
 
     explicit DeckModel(Loader loader) : loader_(std::move(loader)) {}
 

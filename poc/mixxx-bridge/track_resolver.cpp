@@ -84,6 +84,57 @@ bool lookupAnalysisForFingerprint(const std::string& mixxx_dir,
     return true;
 }
 
+bool queryHotcues(const std::string& mixxx_dir, int library_id,
+                  std::vector<Hotcue>& out, std::string& err) {
+    const std::string uri = "file:" + joinPath(mixxx_dir, "mixxxdb.sqlite") +
+                            "?mode=ro&immutable=1";
+    sqlite3* h = nullptr;
+    if (sqlite3_open_v2(uri.c_str(), &h, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI,
+                        nullptr) != SQLITE_OK) {
+        err = std::string("sqlite open failed: ") + (h ? sqlite3_errmsg(h) : "?");
+        sqlite3_close(h);
+        return false;
+    }
+    // position is in frames; total frames = duration * samplerate.
+    const char* sql =
+        "SELECT c.hotcue, c.position, c.color, l.duration, l.samplerate "
+        "FROM cues c JOIN library l ON l.id = c.track_id "
+        "WHERE c.track_id = ? AND c.hotcue >= 0 AND c.position >= 0 "
+        "ORDER BY c.hotcue;";
+    sqlite3_stmt* st = nullptr;
+    if (sqlite3_prepare_v2(h, sql, -1, &st, nullptr) != SQLITE_OK) {
+        err = std::string("sqlite prepare failed: ") + sqlite3_errmsg(h);
+        sqlite3_close(h);
+        return false;
+    }
+    sqlite3_bind_int(st, 1, library_id);
+
+    int rc;
+    while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
+        const int    hotcue = sqlite3_column_int(st, 0);
+        const double pos    = sqlite3_column_double(st, 1);   // frames
+        const long long col = sqlite3_column_int64(st, 2);    // RGB int
+        const double dur    = sqlite3_column_double(st, 3);
+        const double srate  = sqlite3_column_double(st, 4);
+        const double total  = dur * srate;
+        if (total <= 0.0) continue;
+        Hotcue c;
+        c.number   = hotcue;
+        c.fraction = pos / total;
+        if (c.fraction < 0.0) c.fraction = 0.0;
+        if (c.fraction > 1.0) c.fraction = 1.0;
+        c.r = static_cast<uint8_t>((col >> 16) & 0xFF);
+        c.g = static_cast<uint8_t>((col >> 8) & 0xFF);
+        c.b = static_cast<uint8_t>(col & 0xFF);
+        if (c.r == 0 && c.g == 0 && c.b == 0) { c.r = c.g = c.b = 255; }  // unset -> white
+        out.push_back(c);
+    }
+    sqlite3_finalize(st);
+    sqlite3_close(h);
+    if (rc != SQLITE_DONE) { err = "sqlite step error"; return false; }
+    return true;
+}
+
 bool resolveTrackByFingerprint(const std::string& mixxx_dir,
                                const TrackFingerprint& fp,
                                ResolvedTrack& out, std::string& err) {
@@ -94,6 +145,9 @@ bool resolveTrackByFingerprint(const std::string& mixxx_dir,
     const std::string blob = joinPath(joinPath(mixxx_dir, "analysis"),
                                        std::to_string(out.analysis_id));
     if (!decodeWaveformFile(blob, out.waveform, err)) return false;
+
+    std::string herr;  // hotcues are optional decoration
+    queryHotcues(mixxx_dir, out.library_id, out.hotcues, herr);
     return true;
 }
 

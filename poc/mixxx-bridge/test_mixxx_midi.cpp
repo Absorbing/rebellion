@@ -128,13 +128,15 @@ int main() {
         int loaderCalls = 0;
         TrackFingerprint seen;
         DeckModel model([&](const TrackFingerprint& fp, std::string& artist,
-                            std::string& title, double& bpm, Waveform& wf) {
+                            std::string& title, double& bpm, Waveform& wf,
+                            std::vector<Hotcue>& hotcues) {
             ++loaderCalls;
             seen = fp;
             if (fp.empty()) return false;
             artist = "Artist"; title = "Title"; bpm = 124.5;
             wf.visual_sample_rate = 441.0;
             wf.mono.assign(1000, 100);
+            hotcues.push_back({0, 0.25, 255, 0, 0});
             return true;
         });
 

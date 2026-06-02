@@ -16,6 +16,7 @@ static DeckState makeLoaded() {
     d.loaded = true; d.hasWaveform = true;
     d.artist = "Some Artist"; d.title = "A Long Track Title That Might Overflow The Header Area";
     d.bpm = 128.0; d.position = 0.37; d.playing = true; d.sync = true;
+    d.hotcues = {{0, 0.10, 255, 0, 0}, {1, 0.35, 0, 200, 255}, {2, 0.80, 0, 255, 80}};
     d.waveform.visual_sample_rate = 441.0;
     d.waveform.mono.resize(40000);
     d.waveform.low.resize(40000);

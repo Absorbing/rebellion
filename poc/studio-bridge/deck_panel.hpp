@@ -160,6 +160,21 @@ inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d,
             fb.vline(x, mid - hPeak, mid + hPeak, outline);
             fb.vline(x, mid - hAvg,  mid + hAvg,  body);
         }
+
+        // Hotcue markers: a colored line + numbered tag at each cue in the window.
+        for (const auto& hc : d.hotcues) {
+            double mIdx = hc.fraction * static_cast<double>(total);
+            int hx = static_cast<int>((mIdx - static_cast<double>(start)) /
+                                      static_cast<double>(winLen) * kW);
+            if (hx < 0 || hx >= kW) continue;
+            uint16_t c = rgb565(hc.r, hc.g, hc.b);
+            fb.vline(hx, wTop, wBot, c);
+            std::string n = std::to_string(hc.number + 1);
+            int tw = textWidth(n, 1) + 2;
+            fb.fillRect(hx, wTop, tw, 9, c);
+            fb.text(hx + 1, wTop + 1, n, BG, 1);
+        }
+
         fb.vline(playX, wTop, wBot, WHITE);
     } else {
         fb.text(150, mid - 4, "waveform not analysed", DIM, 1);

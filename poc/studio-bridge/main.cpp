@@ -319,7 +319,8 @@ int main(int argc, char** argv) {
     // Deck model: on a track-identity event, match the fingerprint to a library
     // row and decode its waveform from mixxxdb.sqlite + analysis/.
     mxb::DeckModel model([&](const mxb::TrackFingerprint& fp, std::string& artist,
-                             std::string& title, double& bpm, mxb::Waveform& wf) {
+                             std::string& title, double& bpm, mxb::Waveform& wf,
+                             std::vector<mxb::Hotcue>& hotcues) {
         mxb::ResolvedTrack rt;
         std::string err;
         if (!mxb::resolveTrackByFingerprint(g_mixxxDir, fp, rt, err)) {
@@ -327,6 +328,7 @@ int main(int argc, char** argv) {
             return false;
         }
         artist = rt.artist; title = rt.title; wf = std::move(rt.waveform);
+        hotcues = std::move(rt.hotcues);
         if (rt.bpm > 0) bpm = rt.bpm;
         // Band diagnostic: -1 = band vector empty (no signal_filtered decoded);
         // 0 = present but all-zero (decode bug); >0 = real band energy.
