@@ -170,9 +170,10 @@ inline void renderDeckPanel(Framebuffer& fb, int deckNum, const DeckState& d,
             uint16_t c = rgb565(hc.r, hc.g, hc.b);
             fb.vline(hx, wTop, wBot, c);
             std::string n = std::to_string(hc.number + 1);
-            int tw = textWidth(n, 1) + 2;
-            fb.fillRect(hx, wTop, tw, 9, c);
-            fb.text(hx + 1, wTop + 1, n, BG, 1);
+            int tw = textWidth(n, 2) + 4;                 // scale-2 number, readable
+            int tx = (hx + tw <= kW) ? hx : kW - tw;       // keep the tag on-screen
+            fb.fillRect(tx, wTop, tw, 17, c);
+            fb.text(tx + 2, wTop + 2, n, BG, 2);
         }
 
         fb.vline(playX, wTop, wBot, WHITE);
