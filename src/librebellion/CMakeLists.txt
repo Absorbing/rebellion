@@ -88,15 +88,17 @@ target_link_libraries(${TARGET} ${rebellion_LIBS})
 message("librebellion: STATIC")
 set(TARGET librebellionStatic)
 add_library(${TARGET} STATIC
-    ${rebellion_HEADERS} 
+    ${rebellion_HEADERS}
     ${rebellion_SOURCES}
 )
 
 set_target_properties(${TARGET} PROPERTIES PREFIX "")
+# Distinct from the SHARED librebellion so the static .lib doesn't collide with
+# the shared lib's import .lib on Windows (Ninja: "multiple rules generate ...").
 if (WIN32)
-    set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME "rebellion")
+    set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME "rebellion_static")
 else()
-    set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME "librebellion")
+    set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME "librebellion_static")
 endif()
 
 target_include_directories(${TARGET} PRIVATE 

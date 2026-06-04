@@ -15,7 +15,7 @@ NIIPC::NIIPC(const char *name)
         _callback(nullptr),
         _niipc (new _NIIPC(this) ) {
             printf("Constructing NIIPC: %s\n", name);
-            pthread_mutex_init(&_cqlock, NULL);
+            // _cqlock is a std::mutex; default-constructed, no explicit init needed.
 
 }
 
@@ -72,9 +72,9 @@ void NIIPC::queueCallbackResult(std::unique_ptr<NIIPC::Data> data) {
     printf("C> %s: trying to queue callback data\n", this->_name.c_str());
 	if (this->hasCallback()) {
         printf("C> %s: has callback, caching callback result\n", this->_name.c_str());
-        pthread_mutex_lock(&_cqlock);
+        _cqlock.lock();
         this->_callbackResultQueue.push(std::move(data));
-        pthread_mutex_unlock(&_cqlock);
+        _cqlock.unlock();
     } else {
         printf("%s: Can't cache callback result, not set\n", this->_name.c_str());
     }
@@ -95,7 +95,7 @@ std::unique_ptr<NIIPC::Data> NIIPC::fireCallback(std::unique_ptr<NIIPC::Data> da
 
 bool NIIPC::fireCallbackIfResultQueued() {
     if (!this->_callbackResultQueue.empty()) {
-        pthread_mutex_lock(&_cqlock);
+        _cqlock.lock();
 
         printf("C> %s: trying to fire callback (%i remaining)\n", this->_name.c_str(), this->_callbackResultQueue.size());
         if (this->hasCallback()) {
@@ -107,7 +107,7 @@ bool NIIPC::fireCallbackIfResultQueued() {
         }
         this->_callbackResultQueue.pop();
 
-        pthread_mutex_unlock(&_cqlock);
+        _cqlock.unlock();
 
         return true;
     }

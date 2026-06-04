@@ -1,0 +1,486 @@
+// Mixxx Studio Bridge — Stage 3 integration.
+//
+//   Mixxx state ──loopMIDI──▶ MidiDecoder ──▶ DeckModel ──▶ DeckState[1..4]
+//                                                               │
+//   display 0 = Deck A (ch1)   ◀── renderDeckPanel ────────────┤
+//   display 1 = Deck B (ch2)   ◀── renderDeckPanel ────────────┘
+//
+// Reuses the proven studio_waveform device/loop pattern (wait for ON, warm up,
+// pump rebellion_loop, push full frames via rebellion.sendDisplayCmd). The only
+// new live seams are the loopMIDI listener and the SQLite resolver — everything
+// else is the same path that already drove the screens.
+//
+//   studio_bridge "C:\Users\<you>\AppData\Local\Mixxx" ["Mixxx-State"]
+//
+// Single-threaded: rebellion_loop / rebellion_rpc only from main(). RtMidi
+// delivers MIDI on its own thread; it only mutates DeckModel via a mutex-guarded
+// queue drained here, so the device path stays single-threaded.
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include <json.hpp>
+using json = nlohmann::json;
+
+extern "C" {
+#include "rebellion.h"
+}
+
+#include "framebuffer.hpp"
+#include "deck_panel.hpp"
+#include "deck_state.hpp"
+#include "mixxx_midi.hpp"
+#include "mixxx_listener.hpp"
+#include "track_resolver.hpp"
+#include "control_map.hpp"
+#include "midi_out.hpp"
+#include "led_map.hpp"
+#include "mixxxdb.hpp"
+#include "library_model.hpp"
+#include "library_screen.hpp"
+
+namespace {
+
+constexpr int SERIAL_WAIT_MS     = 30000;
+constexpr int INSTANCE_WARMUP_MS = 4000;
+constexpr int SLICE_MS           = 30;
+constexpr int INPUT_POLL_MS      = 5;
+constexpr int REDRAW_MIN_MS      = 33;   // ~30fps cap; overview frames are heavy
+
+std::string g_serial;
+std::string g_mixxxDir;
+
+// Outbound: Studio buttons/pads/knobs -> MIDI -> Mixxx (2nd loopMIDI port).
+// Driven from rpc_callback, which runs on the main thread during rebellion_loop,
+// so direct sends are safe (no cross-thread concern like the inbound listener).
+mxb::MidiOut g_out;
+
+// Input policy: the bridge reserves only the library controls (BROWSE + nav, the
+// last only while the list is open). Everything else -- GROUP A-H, PLAY, CUE,
+// SYNC, pads, knobs -- is forwarded raw so it stays MIDI-mappable in Mixxx.
+
+// Library browse: BROWSE (id 5) opens it, jog (KNOB9) scrolls, jog-click/ENTER
+// loads to Mixxx's first stopped deck, BACK cancels. The bridge owns the list
+// (from mixxxdb) and lock-steps Mixxx's library selection.
+mxb::LibraryModel g_lib;
+bool g_browse = false;
+bool g_browseDirty = false;
+
+// Interactive mapping tool (MXB_LED_PROBE=1): KNOB1 scrubs an LED address (lit on
+// the device, shown on screen 0); any control pressed/turned is echoed on screen
+// 1. Lets us map LED indices >102 and confirm input ids without overshoot.
+bool        g_mapper    = false;
+int         g_ledAddr   = 1;
+int         g_knobAccum = 0;     // KNOB9 sends several ticks/detent; divide them down
+bool        g_addrDirty = true;
+std::string g_lastInput = "(press / turn a control)";
+bool        g_inputDirty = true;
+constexpr int kMapMax  = 213;    // true Studio LED count (matches mappings.lua ledcnt)
+constexpr int kKnobDiv = 4;      // KNOB9 ticks per one LED-address step
+
+int knobNameToIndex(const std::string& name) {  // "KNOB1".."KNOB8" -> 1..8, else 0
+    if (name.size() == 5 && name.compare(0, 4, "KNOB") == 0 &&
+        name[4] >= '1' && name[4] <= '8')
+        return name[4] - '0';
+    return 0;
+}
+
+// Which Mixxx deck each display shows. Display 0 = Deck A, display 1 = Deck B.
+constexpr int kDeckForDisplay[2] = {1, 2};
+
+// --- event plumbing ---------------------------------------------------------
+// RtMidi callback thread pushes BridgeEvents here; main thread drains them.
+std::mutex            g_evMutex;
+std::vector<mxb::BridgeEvent> g_evQueue;
+
+void enqueueEvent(const mxb::BridgeEvent& e) {
+    std::lock_guard<std::mutex> lk(g_evMutex);
+    g_evQueue.push_back(e);
+}
+
+// --- device send (identical framing to studio_waveform) ---------------------
+void sendFB(int display, const mxb::Framebuffer& fb) {
+    json req = {{"method", "rebellion.sendDisplayCmd"},
+                {"params", json::array({g_serial, display, fb.encodeDisplayCommands(display)})},
+                {"id", display + 1}};
+    const std::string s = req.dump();
+    rebellion_rpc(REBELLION_MF_JSON, REBELLION_MT_REQ,
+                  reinterpret_cast<const uint8_t*>(s.c_str()),
+                  static_cast<uint32_t>(s.size()));
+}
+
+// Set one button/pad LED (rebellion.sendLedData: serial, index, color, intensity).
+void sendLed(int index, uint8_t color, uint8_t intensity) {
+    if (g_serial.empty() || index <= 0) return;
+    json req = {{"method", "rebellion.sendLedData"},
+                {"params", json::array({g_serial, index, color, intensity})},
+                {"id", 1000 + index}};
+    const std::string s = req.dump();
+    rebellion_rpc(REBELLION_MF_JSON, REBELLION_MT_REQ,
+                  reinterpret_cast<const uint8_t*>(s.c_str()),
+                  static_cast<uint32_t>(s.size()));
+}
+
+// Turn every LED off, so the device starts dark (the bridge only lights LEDs
+// once purposeful feedback -- hotcues, peak meters -- is wired).
+void clearAllLeds() {
+    for (int i = 1; i <= mxb::studioled::LEDCNT; ++i) sendLed(i, mxb::ledcolor::OFF, 0);
+}
+
+// Move the library cursor one row and lock-step Mixxx's selection.
+void libStep(int dir) {
+    int applied = g_lib.move(dir);
+    if (applied > 0)      g_out.send(mxb::libNote(mxb::kLibDown));
+    else if (applied < 0) g_out.send(mxb::libNote(mxb::kLibUp));
+    if (applied) g_browseDirty = true;
+}
+void libPage(int dir) { for (int i = 0; i < 10; ++i) libStep(dir); }
+void libEnter() {       // open browse and force both lists to the top
+    g_browse = true;
+    g_lib.toTop();
+    g_out.send(mxb::libNote(mxb::kLibTop));
+    g_browseDirty = true;
+}
+
+void pump(int ms) { for (int e = 0; e < ms; e += SLICE_MS) rebellion_loop(SLICE_MS); }
+
+int msSince(std::chrono::steady_clock::time_point t) {
+    return static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t).count());
+}
+
+// Safe JSON field readers — event payloads vary in shape (e.g. an unmapped
+// button has no clean "button" string), so never throw: an uncaught exception
+// here propagates out through rebellion_loop and crashes the whole process.
+std::string jstr(const json& o, const char* k) {
+    if (!o.is_object()) return {};
+    auto it = o.find(k);
+    if (it == o.end()) return {};
+    if (it->is_string())         return it->get<std::string>();
+    if (it->is_number_integer()) return std::to_string(it->get<long long>());
+    return {};
+}
+int jint(const json& o, const char* k, int def) {
+    if (!o.is_object()) return def;
+    auto it = o.find(k);
+    if (it != o.end() && it->is_number()) return it->get<int>();
+    return def;
+}
+
+int rpc_callback(rebellion_message_format mf, rebellion_message_type,
+                 const uint8_t* udata, uint32_t) {
+    if (mf != REBELLION_MF_JSON) return 0;
+    try {
+        json j = json::parse(reinterpret_cast<const char*>(udata));
+        const std::string ev = jstr(j, "event");
+        json d = (j.is_object() && j.contains("data")) ? j["data"] : json::object();
+        json fields = d;
+        if (d.is_object() && d.contains("data") && d["data"].is_object()) fields = d["data"];
+
+        if (ev == "device.state") {
+            std::string st = jstr(fields, "state");
+            if (g_serial.empty() && fields.contains("serial") &&
+                (st == "ON" || st == "STATE_ON")) {
+                g_serial = jstr(fields, "serial");
+                std::fprintf(stderr, "device ON, serial=%s\n", g_serial.c_str());
+            }
+            return 0;
+        }
+
+        // --- Interactive mapping tool: capture instead of forward ------------
+        if (g_mapper) {
+            if (ev == "KNOB_ROTATE") {
+                std::string knob = jstr(fields, "knob"), dir = jstr(fields, "direction");
+                if (knob == "KNOB9") {  // big nav encoder scrubs the LED address
+                    g_knobAccum += (dir == "CLOCKWISE") ? 1 : -1;
+                    while (g_knobAccum >= kKnobDiv)  { g_ledAddr++; g_knobAccum -= kKnobDiv; g_addrDirty = true; }
+                    while (g_knobAccum <= -kKnobDiv) { g_ledAddr--; g_knobAccum += kKnobDiv; g_addrDirty = true; }
+                    if (g_ledAddr < 1) g_ledAddr = 1;
+                    if (g_ledAddr > kMapMax) g_ledAddr = kMapMax;
+                }
+                g_lastInput = "KNOB " + knob + " " + dir;
+            } else if (ev == "BTN_DATA") {
+                std::string name = jstr(fields, "button");
+                g_lastInput = "BTN " + (name.empty() ? std::string("?") : name) +
+                              " id=" + std::to_string(jint(fields, "buttonid", -1)) +
+                              " " + jstr(fields, "state");
+            } else if (ev == "PAD_DATA") {
+                g_lastInput = "PAD " + std::to_string(jint(fields, "padid", -1)) +
+                              " " + jstr(fields, "state") +
+                              " p=" + std::to_string(jint(fields, "cpressure", 0));
+            } else {
+                g_lastInput = ev;  // catch-all (e.g. unparsed jog)
+            }
+            g_inputDirty = true;
+            return 0;
+        }
+
+        // --- Knobs ----------------------------------------------------------
+        if (ev == "KNOB_ROTATE") {
+            std::string knob = jstr(fields, "knob"), dir = jstr(fields, "direction");
+            if (g_browse) {                       // jog scrolls the library list
+                if (knob == "KNOB9") {
+                    g_knobAccum += (dir == "CLOCKWISE") ? 1 : -1;
+                    while (g_knobAccum >= kKnobDiv)  { libStep(+1); g_knobAccum -= kKnobDiv; }
+                    while (g_knobAccum <= -kKnobDiv) { libStep(-1); g_knobAccum += kKnobDiv; }
+                }
+                return 0;
+            }
+            int k = knobNameToIndex(knob);
+            if (k >= 1 && !dir.empty()) g_out.send(mxb::mapKnobRotate(k, dir == "CLOCKWISE"));
+            return 0;
+        }
+
+        // --- Buttons --------------------------------------------------------
+        if (ev == "BTN_DATA") {
+            int id = jint(fields, "buttonid", -1);
+            std::string state = jstr(fields, "state");
+            if (id < 0 || (state != "PRESSED" && state != "RELEASED")) return 0;
+            const bool pressed = (state == "PRESSED");
+
+            // BROWSE (id 5) toggles the library list at any time (the only
+            // always-reserved button).
+            if (id == mxb::studioled::btn::BROWSE) {
+                if (pressed) { if (g_browse) g_browse = false; else libEnter(); }
+                return 0;
+            }
+
+            // While the list is open, the nav cluster drives it (reserved only
+            // here; outside browse these forward raw like everything else).
+            if (g_browse) {
+                if (pressed) switch (id) {
+                    case mxb::studioled::btn::JOG_CLICK:                 // jog-click: load + close
+                    case mxb::studioled::btn::ENTER:                    // ENTER: load + close
+                        g_out.send(mxb::libNote(mxb::kLoad)); g_browse = false; break;
+                    case mxb::studioled::btn::BACK:     g_browse = false; break;  // cancel
+                    case mxb::studioled::btn::NAV_PREV: libPage(-1); break;       // < : page up
+                    case mxb::studioled::btn::NAV_NEXT: libPage(+1); break;       // > : page down
+                    default: break;
+                }
+                return 0;
+            }
+
+            // Everything else (incl. GROUP A-H, PLAY/CUE/SYNC) forwarded raw.
+            g_out.send(mxb::mapButton(id, pressed));
+            return 0;
+        }
+
+        // --- Pads -----------------------------------------------------------
+        if (ev == "PAD_DATA") {
+            if (g_browse) return 0;               // pads inert while browsing
+            int pad = jint(fields, "padid", -1);
+            std::string state = jstr(fields, "state");
+            if (pad >= 1 && (state == "PRESSED" || state == "RELEASED"))
+                g_out.send(mxb::mapPad(pad, state == "PRESSED", jint(fields, "cpressure", 0)));
+            return 0;
+        }
+    } catch (...) {
+        return 0;  // never let a malformed event crash the process
+    }
+    return 0;
+}
+
+std::string defaultMixxxDir() {
+#ifdef _WIN32
+    if (const char* la = std::getenv("LOCALAPPDATA")) return std::string(la) + "\\Mixxx";
+    if (const char* ra = std::getenv("APPDATA"))      return std::string(ra) + "\\Mixxx";
+#endif
+    return ".";
+}
+
+void renderSplash(mxb::Framebuffer& fb, int deckNum) {
+    using namespace mxb::dp;
+    fb.clear(BG);
+    fb.fillRect(0, 0, mxb::kW, 3, CYAN);
+    fb.fillRect(0, mxb::kH - 3, mxb::kW, 3, CYAN);
+    const std::string t = "MIXXX STUDIO BRIDGE";
+    fb.text((mxb::kW - mxb::textWidth(t, 3)) / 2, 96, t, CYAN, 3);
+    std::string sub = "waiting for Mixxx on deck ";
+    sub += static_cast<char>('A' + (deckNum - 1));
+    fb.text((mxb::kW - mxb::textWidth(sub, 1)) / 2, 140, sub, DIM, 1);
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    g_mapper = std::getenv("MXB_LED_PROBE") != nullptr;
+    g_mixxxDir = (argc > 1) ? argv[1] : defaultMixxxDir();
+    const std::string midiPort = (argc > 2) ? argv[2] : "Mixxx-State";
+    const std::string outPort  = (argc > 3) ? argv[3] : "Studio-Control";
+    std::fprintf(stderr, "studio_bridge: Mixxx dir = %s, in = \"%s\", out = \"%s\"\n",
+                 g_mixxxDir.c_str(), midiPort.c_str(), outPort.c_str());
+
+    // Deck model: on a track-identity event, match the fingerprint to a library
+    // row and decode its waveform from mixxxdb.sqlite + analysis/.
+    mxb::DeckModel model([&](const mxb::TrackFingerprint& fp, std::string& artist,
+                             std::string& title, double& bpm, mxb::Waveform& wf,
+                             std::vector<mxb::Hotcue>& hotcues) {
+        mxb::ResolvedTrack rt;
+        std::string err;
+        if (!mxb::resolveTrackByFingerprint(g_mixxxDir, fp, rt, err)) {
+            std::fprintf(stderr, "resolve failed: %s\n", err.c_str());
+            return false;
+        }
+        artist = rt.artist; title = rt.title; wf = std::move(rt.waveform);
+        hotcues = std::move(rt.hotcues);
+        if (rt.bpm > 0) bpm = rt.bpm;
+        // Band diagnostic: -1 = band vector empty (no signal_filtered decoded);
+        // 0 = present but all-zero (decode bug); >0 = real band energy.
+        auto avg = [](const std::vector<uint8_t>& v) -> int {
+            if (v.empty()) return -1;
+            long s = 0; for (uint8_t x : v) s += x;
+            return static_cast<int>(s / static_cast<long>(v.size()));
+        };
+        std::fprintf(stderr, "loaded: %s - %s [%s] (%zu frames; bands l/m/h=%d/%d/%d; %zu hotcues)\n",
+                     artist.c_str(), title.c_str(), rt.location.c_str(), wf.mono.size(),
+                     avg(wf.low), avg(wf.mid), avg(wf.high), hotcues.size());
+        return true;
+    });
+
+    // MIDI decode -> queue (RtMidi thread) ; drained on the main thread. The
+    // listener builds its own decoder from this sink.
+    mxb::MixxxListener listener([&](const mxb::BridgeEvent& e) { enqueueEvent(e); });
+
+    std::string lerr;
+    if (!listener.open(midiPort, lerr)) {
+        std::fprintf(stderr, "MIDI listener: %s\n", lerr.c_str());
+        std::fprintf(stderr, "available input ports:\n");
+        for (const auto& p : mxb::MixxxListener::listInputPorts())
+            std::fprintf(stderr, "  - %s\n", p.c_str());
+        std::fprintf(stderr, "(continuing; screens will show 'waiting for Mixxx')\n");
+    }
+
+    // Outbound port (Studio controls -> Mixxx). Optional: bridge still drives
+    // the screens if it's missing, just won't forward buttons.
+    std::string oerr;
+    if (!g_out.open(outPort, oerr)) {
+        std::fprintf(stderr, "MIDI out: %s\n", oerr.c_str());
+        std::fprintf(stderr, "available output ports:\n");
+        for (const auto& p : mxb::MidiOut::listOutputPorts())
+            std::fprintf(stderr, "  - %s\n", p.c_str());
+        std::fprintf(stderr, "(continuing; Studio buttons won't reach Mixxx)\n");
+    } else {
+        std::fprintf(stderr, "forwarding Studio controls -> \"%s\"\n", outPort.c_str());
+    }
+
+    rebellion(rpc_callback);
+    for (int w = 0; w < SERIAL_WAIT_MS && g_serial.empty(); w += SLICE_MS)
+        rebellion_loop(SLICE_MS);
+    if (g_serial.empty()) {
+        std::fprintf(stderr, "no Studio (USB+PSU, NIHardwareService running, "
+                             "other NI apps closed?)\n");
+        rebellion(nullptr);
+        return 1;
+    }
+    std::fprintf(stderr, "warming up instance...\n");
+    pump(INSTANCE_WARMUP_MS);
+
+    // Initial paint: splash per deck until Mixxx sends state.
+    for (int disp = 0; disp < 2; ++disp) {
+        mxb::Framebuffer fb; renderSplash(fb, kDeckForDisplay[disp]); sendFB(disp, fb);
+    }
+
+    // Interactive mapping tool (MXB_LED_PROBE=1): KNOB1 scrubs the lit LED address
+    // (screen 0); any control you press/turn is echoed (screen 1). Maps LED
+    // indices (incl. >102 now that ledcnt is bumped) + confirms input ids.
+    if (g_mapper) {
+        std::fprintf(stderr, "MAPPER: turn KNOB9 (big encoder) to move the lit LED (1..%d, "
+                             "screen 0); press/turn any control to see its id (screen 1). "
+                             "Ctrl+C to exit.\n", kMapMax);
+        int prevAddr = 0;
+        for (;;) {
+            rebellion_loop(INPUT_POLL_MS);
+            if (g_addrDirty) {
+                if (prevAddr > 0 && prevAddr != g_ledAddr) sendLed(prevAddr, mxb::ledcolor::OFF, 0);
+                sendLed(g_ledAddr, mxb::ledcolor::WHITE, 3);
+                mxb::Framebuffer fb; fb.clear(mxb::dp::BG);
+                fb.text(150, 70, "LED ADDRESS", mxb::dp::DIM, 1);
+                std::string t = std::to_string(g_ledAddr);
+                fb.text((mxb::kW - mxb::textWidth(t, 6)) / 2, 100, t, mxb::dp::CYAN, 6);
+                fb.text(110, 200, "turn KNOB9 to move", mxb::dp::DIM, 1);
+                sendFB(0, fb);
+                prevAddr = g_ledAddr;
+                g_addrDirty = false;
+            }
+            if (g_inputDirty) {
+                mxb::Framebuffer fb; fb.clear(mxb::dp::BG);
+                fb.text(150, 70, "LAST INPUT", mxb::dp::DIM, 1);
+                fb.text(20, 120, g_lastInput, mxb::dp::WHITE, 2);
+                sendFB(1, fb);
+                g_inputDirty = false;
+            }
+        }
+    }
+
+    clearAllLeds();  // start dark; LEDs light only with purposeful feedback
+
+    // Load the browsable library list from mixxxdb (ordered by Artist, Title).
+    {
+        std::vector<mxb::LibRow> rows; std::string lerr2;
+        if (mxb::queryLibraryTracks(g_mixxxDir, 2000, rows, lerr2)) {
+            g_lib.setTracks(std::move(rows));
+            std::fprintf(stderr, "library: %d tracks (BROWSE opens the list)\n", g_lib.size());
+        } else {
+            std::fprintf(stderr, "library load failed: %s\n", lerr2.c_str());
+        }
+    }
+
+    std::fprintf(stderr, "ready: display 0 = Deck A, display 1 = Deck B. "
+                         "Load tracks in Mixxx; BROWSE opens the library.  Ctrl+C to exit.\n");
+
+    auto lastDraw = std::chrono::steady_clock::now();
+    bool lastBrowse = false;
+    for (;;) {
+        rebellion_loop(INPUT_POLL_MS);
+
+        // Drain MIDI events captured on the RtMidi thread.
+        std::vector<mxb::BridgeEvent> batch;
+        {
+            std::lock_guard<std::mutex> lk(g_evMutex);
+            batch.swap(g_evQueue);
+        }
+        for (const auto& e : batch) model.apply(e);
+
+        // Leaving browse -> repaint the decks that the list covered.
+        if (g_browse != lastBrowse) {
+            if (!g_browse) { model.deck(1).dirty = true; model.deck(2).dirty = true; }
+            lastBrowse = g_browse;
+        }
+
+
+        // Redraw, throttled. In browse mode the list owns display 0; deck B keeps
+        // updating on display 1. (Full-frame pushes are heavy; SPEC §4.4 diffs later.)
+        if (msSince(lastDraw) >= REDRAW_MIN_MS) {
+            if (g_browse) {
+                if (g_browseDirty) {
+                    mxb::Framebuffer fb; mxb::renderLibrary(fb, g_lib);
+                    sendFB(0, fb); g_browseDirty = false;
+                }
+                mxb::DeckState& d2 = model.deck(2);
+                if (d2.dirty) {
+                    mxb::Framebuffer fb; mxb::renderDeckPanel(fb, 2, d2);
+                    sendFB(1, fb); d2.dirty = false;
+                }
+            } else {
+                for (int disp = 0; disp < 2; ++disp) {
+                    int deckNum = kDeckForDisplay[disp];
+                    mxb::DeckState& d = model.deck(deckNum);
+                    if (d.dirty) {
+                        mxb::Framebuffer fb;
+                        mxb::renderDeckPanel(fb, deckNum, d);
+                        sendFB(disp, fb);
+                        d.dirty = false;
+                    }
+                }
+            }
+            lastDraw = std::chrono::steady_clock::now();
+        }
+    }
+    return 0;  // unreachable
+}

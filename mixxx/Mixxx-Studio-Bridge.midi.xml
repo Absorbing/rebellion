@@ -1,0 +1,52 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!--
+  Mixxx Studio Bridge — state emitter (Mixxx -> bridge daemon).
+
+  This mapping's only job is to load the script, which streams the loaded-track
+  IDENTITY (a numeric fingerprint) plus live transport state out to the bridge
+  over a virtual MIDI port. It has NO input bindings — Studio buttons -> Mixxx is
+  a separate, standard mapping on a second port (the outbound direction).
+
+  WHY a fingerprint and not the file path: Mixxx controller scripting exposes no
+  string controls — there is no `file_path` control (confirmed against the 2.4
+  control reference). So we send the read-only numeric controls Mixxx *does*
+  expose on load (track_samples / track_samplerate / duration / file_bpm); the
+  bridge matches those to a row in mixxxdb.sqlite and scrapes the rest.
+
+  SETUP (Windows):
+    1. Install loopMIDI (https://www.tobias-erichsen.de/software/loopmidi.html)
+       and create a port named exactly: Mixxx-State
+    2. Copy this file + Mixxx-Studio-Bridge.scripts.js to
+       %APPDATA%\Mixxx\controllers\
+    3. Mixxx -> Preferences -> Controllers -> "Mixxx-State" (loopMIDI) ->
+       Load mapping "Mixxx Studio Bridge (state)" -> Enabled.
+    4. Run studio_bridge; load a track. The deck screen fills in.
+
+  Wire format (must match poc/mixxx-bridge/mixxx_midi.*):
+    Identity : F0 7D 01 <deck 1..4> <7-bit-packed 13-byte payload> F7
+               payload BE = samples(4) samplerate(3) durationMs(4) bpmCenti(2)
+    Cleared  : F0 7D 02 <deck> F7
+    Play     : 9<ch> 10 7F / 80 10 00     (note 0x10)
+    Sync     : 9<ch> 13 7F / 80 13 00     (note 0x13)
+    Loop     : 9<ch> 18 7F / 80 18 00     (note 0x18)
+    Position : B<ch> 12 <0..127>          (CC 0x12, ~20 Hz)
+  where <ch> = deck-1 (deck 1 -> MIDI channel 1 -> status low nibble 0).
+-->
+<MixxxControllerPreset mixxxVersion="2.4.0" schemaVersion="1">
+  <info>
+    <name>Mixxx Studio Bridge (state)</name>
+    <author>Mixxx Studio Bridge</author>
+    <description>Streams loaded-track fingerprint + transport state to the Studio bridge daemon. Output only.</description>
+  </info>
+  <controller id="MixxxStudioBridge">
+    <scriptfiles>
+      <file filename="Mixxx-Studio-Bridge.scripts.js" functionprefix="StudioBridge"/>
+    </scriptfiles>
+    <controls>
+      <!-- No input bindings: init() wires engine connections + a position timer. -->
+    </controls>
+    <outputs>
+      <!-- All output is script-generated via midi.sendShortMsg/sendSysexMsg. -->
+    </outputs>
+  </controller>
+</MixxxControllerPreset>

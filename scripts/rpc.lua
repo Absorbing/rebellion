@@ -113,6 +113,27 @@ addRpc 'rebellion.sendDataToDisplay' (function(serial, display, data)
     self:sendDataToDisplay(display, warr)
 end)
 
+-- Fast path: the caller has already built the full device command stream
+-- (header + RLE pixel commands + blit + end) in `data`. We just frame and push
+-- it — no per-pixel Lua work, unlike rebellion.sendDataToDisplay above.
+addRpc 'rebellion.sendDisplayCmd' (function(serial, display, data)
+    local instances = require 'nidevices':getInstances{ serial = serial } or {}
+    local _,self = next(instances)
+
+    if not self then
+        return nil, "no instance found"
+    end
+    if not data or #data == 0 then
+        return nil, "no display data given"
+    end
+
+    local reqport = self:getReqPort()
+    niproto.PARSE_DISPLAY_RESULT(
+        reqport:push(niproto.MSG_DISPLAY(display, data))
+    )
+    return true
+end)
+
 addRpc 'rebellion.sendLedData' (function(serial, led, color, intense)
     local instances = require 'nidevices':getInstances{ serial = serial } or {}
     local _,self = next(instances)

@@ -85,12 +85,14 @@ target_include_directories(${TARGET} PRIVATE
 message("liblua: STATIC")
 set(TARGET liblua-Static)
 add_library(${TARGET} STATIC
-    ${lua_HEADERS} 
+    ${lua_HEADERS}
     ${lua_SOURCES}
 )
 
 set_target_properties(${TARGET} PROPERTIES PREFIX "")
-set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME "liblua")
+# Distinct from the SHARED liblua so the static .lib doesn't collide with the
+# shared lib's import .lib on Windows (Ninja: "multiple rules generate ...").
+set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME "liblua_static")
 
 target_include_directories(${TARGET} PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/src

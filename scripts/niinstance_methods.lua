@@ -308,10 +308,16 @@ end
 
 function _M:onLOOP(...)
     local notifport = self:getNotifPort()
-    notifport:loop(0.005)
-    --assert(self:switchState("halt", "no error"))
-    --log.debug(self:getDevice():getName() .. ":" .. self:getSerial() .. " loop")
-    --App.sleep(0.1)
+    -- The platform pipe loop advances only ONE notification message per call, so
+    -- a fast knob spin buffers a deep queue in the OS pipe that used to drain
+    -- one-message-per-cycle and replay long after the knob stopped. Drain it
+    -- aggressively here: one short blocking poll for idle responsiveness, then a
+    -- burst of non-blocking polls that flush everything already buffered.
+    -- loop(0) is a cheap no-op when nothing is ready, so idle cost stays low.
+    notifport:loop(0.003)
+    for _ = 1, 48 do
+        notifport:loop(0)
+    end
 end
 
 function _M:onERROR(...)
@@ -397,11 +403,14 @@ local function _display_cmd_blit(data)
     tinsert(data, 0x00)
 end
 
-local function _display_cmd_end(data)
-    --end of data
+local function _display_cmd_end(data, display)
+    --end of data (commit). Byte 3 carries the display index: the device's DSD
+    -- setup shows display N's end command is 0x40 0x00 0xNN 0x00. Hardcoding 0x00
+    -- here made every commit target display 0, so display 1 never updated.
+    local _display = display or 0
     tinsert(data, 0x40)
     tinsert(data, 0x00)
-    tinsert(data, 0x00)
+    tinsert(data, _display)
     tinsert(data, 0x00)
 end
 
@@ -567,7 +576,7 @@ function _M:sendDataToDisplay(display, data)
     end
 --]]
     _display_cmd_blit(_data)
-    _display_cmd_end(_data)
+    _display_cmd_end(_data, display)
 
     local reqport = self:getReqPort()
     local res = niproto.PARSE_DISPLAY_RESULT(
